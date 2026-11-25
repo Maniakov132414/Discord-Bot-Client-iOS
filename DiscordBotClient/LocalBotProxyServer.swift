@@ -951,7 +951,7 @@ final class LocalBotProxyServer: ObservableObject {
                 "badges": [],
                 "connected_accounts": [],
                 "guild_badges": [],
-                "guild_member": guildMember ?? NSNull(),
+                "guild_member": (guildMember as Any?) ?? NSNull(),
                 "legacy_username": NSNull(),
                 "mutual_friends": [],
                 "mutual_friends_count": 0,
@@ -964,7 +964,7 @@ final class LocalBotProxyServer: ObservableObject {
                 "user_profile": [
                     "accent_color": userObj["accent_color"] ?? NSNull(),
                     "banner": userObj["banner"] ?? NSNull(),
-                    "bio": bio ?? NSNull(),
+                    "bio": (bio as Any?) ?? NSNull(),
                     "collectibles": [],
                     "emoji": NSNull(),
                     "popout_animation_particle_type": NSNull(),
@@ -979,7 +979,7 @@ final class LocalBotProxyServer: ObservableObject {
                 payload["guild_member_profile"] = [
                     "guild_id": gid,
                     "pronouns": "",
-                    "bio": memberBio ?? NSNull(),
+                    "bio": (memberBio as Any?) ?? NSNull(),
                     "banner": memberBanner,
                     "accent_color": NSNull(),
                     "theme_colors": NSNull(),

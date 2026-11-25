@@ -56,7 +56,7 @@ final class KeychainBotStore: ObservableObject {
         self.bots = loadVaultFromKeychain()
     }
 
-    static func normalizeToken(_ raw: String) -> String {
+    nonisolated static func normalizeToken(_ raw: String) -> String {
         var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if (cleaned.hasPrefix("\"") && cleaned.hasSuffix("\"")) || (cleaned.hasPrefix("'") && cleaned.hasSuffix("'")) {
             cleaned = String(cleaned.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
