@@ -1,0 +1,63 @@
+{
+  "name": "DiscordBotClient Repo",
+  "identifier": "com.maniakov.discordbotclient.repo",
+  "subtitle": "Native iOS Discord Bot Client",
+  "description": "Standalone native iOS Discord Bot Client (embedded loopback NWListener proxy, iOS Keychain vault, no PlugIns) for ESign, Feather, SideStore, and AltStore.",
+  "sourceURL": "https://raw.githubusercontent.com/Maniakov132414/Discord-Bot-Client-iOS/main/repo.json",
+  "iconURL": "https://raw.githubusercontent.com/Maniakov132414/Discord-Bot-Client-iOS/main/DiscordBotClient/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+  "headerURL": "https://raw.githubusercontent.com/Maniakov132414/Discord-Bot-Client-iOS/main/DiscordBotClient/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+  "website": "https://github.com/Maniakov132414/Discord-Bot-Client-iOS",
+  "tintColor": "#5865F2",
+  "featuredApps": [
+    "com.maniakov.discordbotclient"
+  ],
+  "apps": [
+    {
+      "name": "DiscordBotClient (iOS 15+ NoPlug)",
+      "bundleIdentifier": "com.maniakov.discordbotclient",
+      "developerName": "Maniakov",
+      "subtitle": "iOS 15+ • Standalone Native Bot Client",
+      "localizedDescription": "Chạy độc lập hoàn toàn trên iPhone/iPad với máy chủ loopback NWListener nội bộ, lưu Bot Token trong iOS Keychain Vault, đổi bot 1 chạm, không cần server web ngoài.",
+      "iconURL": "https://raw.githubusercontent.com/Maniakov132414/Discord-Bot-Client-iOS/main/DiscordBotClient/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+      "tintColor": "#5865F2",
+      "category": "social",
+      "type": 1,
+      "version": "1.0.1",
+      "versionDate": "2026-11-25T19:45:00+07:00",
+      "versionDescription": "v1.0.1 (Build 2): Gói WebBundle.json phẳng (khắc phục lỗi cài đặt ESign/Feather), sửa URL-encoded @me profile, token JSON.stringify, Keychain fallback -34018 và loại bỏ delay chạm WebView.",
+      "downloadURL": "https://github.com/Maniakov132414/Discord-Bot-Client-iOS/releases/latest/download/DiscordBotClient.ipa",
+      "size": 4500000,
+      "versions": [
+        {
+          "version": "1.0.1",
+          "buildVersion": "2",
+          "date": "2026-11-25",
+          "versionDate": "2026-11-25",
+          "localizedDescription": "v1.0.1 (Build 2): Flat WebBundle.json, URL-encoded @me profile, token JSON.stringify, Keychain fallback, zero ldid.",
+          "versionDescription": "v1.0.1 (Build 2): Flat WebBundle.json, URL-encoded @me profile, token JSON.stringify, Keychain fallback, zero ldid.",
+          "downloadURL": "https://github.com/Maniakov132414/Discord-Bot-Client-iOS/releases/latest/download/DiscordBotClient.ipa",
+          "size": 4500000,
+          "minOSVersion": "15.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSPhotoLibraryUsageDescription": "BotClient cần quyền truy cập Thư viện ảnh để gửi ảnh và video qua Discord.",
+          "NSCameraUsageDescription": "BotClient cần quyền Camera để chụp ảnh gửi trực tiếp vào kênh Discord.",
+          "NSMicrophoneUsageDescription": "BotClient cần quyền Micro khi ghi âm hoặc quay video đính kèm."
+        }
+      }
+    }
+  ],
+  "news": [
+    {
+      "title": "DiscordBotClient iOS 1.0.1",
+      "identifier": "dbc-ios-v1-0-1",
+      "caption": "Đóng gói phẳng WebBundle.json tương thích ESign/Feather/SideStore/AltStore, sửa proxy @me và lưu Bot Vault ổn định trên mọi chứng chỉ.",
+      "date": "2026-11-25",
+      "tintColor": "#5865F2",
+      "notify": false
+    }
+  ]
+}

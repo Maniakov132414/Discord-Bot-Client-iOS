@@ -34,7 +34,7 @@ struct ContentView: View {
                 }
             }
 
-            // Subtle floating Bot Manager pill (draggable) + 3-finger tap shortcut
+            // Subtle floating Bot Manager pill (draggable)
             Button {
                 showManagerSheet = true
             } label: {
@@ -73,12 +73,6 @@ struct ContentView: View {
                     }
             )
         }
-        .simultaneousGesture(
-            TapGesture(count: 3)
-                .onEnded {
-                    showManagerSheet = true
-                }
-        )
         .sheet(isPresented: $showManagerSheet) {
             BotManagerSheet(webController: webController)
                 .environmentObject(store)

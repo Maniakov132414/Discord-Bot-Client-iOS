@@ -129,6 +129,14 @@ final class KeychainBotStore: ObservableObject {
         return str
     }
 
+    private func fallbackVaultFileURL() -> URL? {
+        guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("dbc_vault.json")
+    }
+
     private func loadVaultFromKeychain() -> [SavedBotEntry] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -140,6 +148,11 @@ final class KeychainBotStore: ObservableObject {
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecSuccess, let data = result as? Data,
+           let decoded = try? JSONDecoder().decode([SavedBotEntry].self, from: data) {
+            return decoded
+        }
+        if let fileURL = fallbackVaultFileURL(),
+           let data = try? Data(contentsOf: fileURL),
            let decoded = try? JSONDecoder().decode([SavedBotEntry].self, from: data) {
             return decoded
         }
@@ -156,12 +169,17 @@ final class KeychainBotStore: ObservableObject {
         let attributes: [String: Any] = [
             kSecValueData as String: data
         ]
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
             var addQuery = query
             addQuery[kSecValueData as String] = data
             addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            SecItemAdd(addQuery as CFDictionary, nil)
+            status = SecItemAdd(addQuery as CFDictionary, nil)
+        }
+        if status == errSecMissingEntitlement || status != errSecSuccess {
+            if let fileURL = fallbackVaultFileURL() {
+                try? data.write(to: fileURL, options: .atomic)
+            }
         }
     }
 }

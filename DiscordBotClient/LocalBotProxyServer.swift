@@ -15,8 +15,16 @@ final class LocalBotProxyServer: ObservableObject {
     private var cachedPatchedHTML: String?
     private let userAgent = "DiscordBot (https://github.com/aiko-chan-ai/DiscordBotClient, 3.10.7)"
     private let maxBodyBytes = 25 * 1024 * 1024
+    private let webBundle: [String: (mime: String, data: Data)]
 
     private lazy var urlSession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 20
+        cfg.timeoutIntervalForResource = 60
+        return URLSession(configuration: cfg)
+    }()
+
+    private lazy var noRedirectSession: URLSession = {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 20
         cfg.timeoutIntervalForResource = 60
@@ -30,7 +38,34 @@ final class LocalBotProxyServer: ObservableObject {
         return dir
     }()
 
-    private init() {}
+    private init() {
+        self.webBundle = Self.loadWebBundle()
+    }
+
+    func getTextResource(_ key: String) -> String? {
+        guard let entry = resourceEntry(subpath: key) else { return nil }
+        return String(data: entry.data, encoding: .utf8)
+    }
+
+    private static func loadWebBundle() -> [String: (mime: String, data: Data)] {
+        guard let url = Bundle.main.url(forResource: "WebBundle", withExtension: "json"),
+              let raw = try? Data(contentsOf: url),
+              let root = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any],
+              let files = root["files"] as? [String: [String: String]] else {
+            return [:]
+        }
+        var out: [String: (mime: String, data: Data)] = [:]
+        out.reserveCapacity(files.count)
+        for (key, meta) in files {
+            guard let b64 = meta["b64"],
+                  let decoded = Data(base64Encoded: b64) else {
+                continue
+            }
+            let mime = meta["mime"] ?? "application/octet-stream"
+            out[key] = (mime: mime, data: decoded)
+        }
+        return out
+    }
 
     var baseURL: URL? {
         guard port > 0 else { return nil }
@@ -225,7 +260,8 @@ final class LocalBotProxyServer: ObservableObject {
 
     private func makeParsedRequest(method: String, rawTarget: String, headers: [String: String], body: Data) -> ParsedHTTPRequest {
         let qSplit = rawTarget.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
-        let path = String(qSplit[0])
+        let rawPath = String(qSplit[0])
+        let path = rawPath.removingPercentEncoding ?? rawPath
         let query = qSplit.count > 1 ? String(qSplit[1]) : ""
         return ParsedHTTPRequest(method: method, rawTarget: rawTarget, path: path, query: query, headers: headers, body: body)
     }
@@ -252,16 +288,19 @@ final class LocalBotProxyServer: ObservableObject {
     }
 
     private func sendResponse(status: Int, headers: [String: String], body: Data, on connection: NWConnection) {
-        var mergedHeaders = headers
-        mergedHeaders["Content-Length"] = "\(body.count)"
-        mergedHeaders["Connection"] = "close"
-        if mergedHeaders["Access-Control-Allow-Origin"] == nil {
-            mergedHeaders["Access-Control-Allow-Origin"] = "*"
+        var deduped: [String: (key: String, value: String)] = [:]
+        for (k, v) in headers {
+            deduped[k.lowercased()] = (k, v)
+        }
+        deduped["content-length"] = ("Content-Length", "\(body.count)")
+        deduped["connection"] = ("Connection", "close")
+        if deduped["access-control-allow-origin"] == nil {
+            deduped["access-control-allow-origin"] = ("Access-Control-Allow-Origin", "*")
         }
 
         var head = "HTTP/1.1 \(status) \(reasonPhrase(for: status))\r\n"
-        for (k, v) in mergedHeaders {
-            head += "\(k): \(v)\r\n"
+        for (_, pair) in deduped {
+            head += "\(pair.key): \(pair.value)\r\n"
         }
         head += "\r\n"
 
@@ -400,35 +439,33 @@ final class LocalBotProxyServer: ObservableObject {
 
     // MARK: - Patched Discord HTML
 
-    private func resourceURL(subpath: String) -> URL? {
-        guard let root = Bundle.main.resourceURL?.appendingPathComponent("Resources", isDirectory: true) else {
-            return nil
-        }
-        let cleaned = subpath.split(separator: "/").filter { $0 != ".." && $0 != "." }.joined(separator: "/")
-        return root.appendingPathComponent(cleaned)
+    private func normalizedResourceKey(_ subpath: String) -> String {
+        subpath.split(separator: "/").filter { $0 != ".." && $0 != "." }.joined(separator: "/")
+    }
+
+    private func resourceEntry(subpath: String) -> (mime: String, data: Data)? {
+        let key = normalizedResourceKey(subpath)
+        return webBundle[key]
     }
 
     private func serveResourceFile(subpath: String, noCache: Bool) -> HTTPResponse {
-        guard let fileURL = resourceURL(subpath: subpath),
-              FileManager.default.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL) else {
+        guard let entry = resourceEntry(subpath: subpath) else {
             return HTTPResponse(status: 404, headers: ["Content-Type": "text/plain"], body: Data("Not Found".utf8))
         }
-        var headers: [String: String] = ["Content-Type": mimeType(for: fileURL.pathExtension)]
+        var headers: [String: String] = ["Content-Type": entry.mime]
         if noCache {
             headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         } else {
             headers["Cache-Control"] = "public, max-age=3600"
         }
-        return HTTPResponse(status: 200, headers: headers, body: data)
+        return HTTPResponse(status: 200, headers: headers, body: entry.data)
     }
 
     private func buildPatchedDiscordHTML() -> String {
         if let cached = cachedPatchedHTML {
             return cached
         }
-        guard let htmlURL = resourceURL(subpath: "snapshot/index.html"),
-              var html = try? String(contentsOf: htmlURL, encoding: .utf8) else {
+        guard var html = getTextResource("snapshot/index.html") else {
             return "<html><body style='background:#111214;color:#fff;font-family:-apple-system;padding:32px;'>Missing snapshot/index.html</body></html>"
         }
 
@@ -459,7 +496,7 @@ final class LocalBotProxyServer: ObservableObject {
         // 4. Disable inline fast-connect WebSocket
         html = html.replacingOccurrences(of: "if (null != window.WebSocket &&", with: "if (false && null != window.WebSocket &&")
 
-        let mobileCSS = (try? resourceURL(subpath: "dbc-assets/dbc-mobile.css").flatMap { try String(contentsOf: $0, encoding: .utf8) }) ?? ""
+        let mobileCSS = getTextResource("dbc-assets/dbc-mobile.css") ?? ""
         let guildExp = loadJSONFragment(subpath: "snapshot/guild_experiments.json", fallback: "[]")
         let userExp = loadJSONFragment(subpath: "snapshot/user_experiments.json", fallback: "[]")
         let apexExp = loadJSONFragment(subpath: "snapshot/apex_experiments.json", fallback: "{}")
@@ -478,7 +515,7 @@ final class LocalBotProxyServer: ObservableObject {
             <meta name="apple-mobile-web-app-capable" content="yes">
             <meta name="mobile-web-app-capable" content="yes">
             <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-            <meta name="apple-mobile-web-app-title" content="BotClient">
+            <meta name="apple-mobile-web-app-title" content="DiscordBot">
             <link rel="manifest" href="/manifest.json">
             <link rel="apple-touch-icon" href="/dbc-assets/icon.png">
             <link rel="icon" type="image/png" href="/dbc-assets/icon.png">
@@ -498,8 +535,7 @@ final class LocalBotProxyServer: ObservableObject {
     }
 
     private func loadJSONFragment(subpath: String, fallback: String) -> String {
-        guard let url = resourceURL(subpath: subpath),
-              let txt = try? String(contentsOf: url, encoding: .utf8),
+        guard let txt = getTextResource(subpath),
               !txt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return fallback
         }
@@ -538,9 +574,9 @@ final class LocalBotProxyServer: ObservableObject {
                 return jsonResponse(["success": false, "message": "Discord API Error [\(http.statusCode)]: \(errMsg)"])
             }
 
-            let flags = (appObj["flags"] as? Int) ?? 0
+            let flags = (appObj["flags"] as? NSNumber)?.int64Value ?? 0
             // GatewayIntentBits allIntents bitmask = 53608447
-            var intents = 53_608_447
+            var intents: Int64 = 53_608_447
             let hasPresence = (flags & ((1 << 12) | (1 << 13))) != 0
             let hasMembers = (flags & ((1 << 14) | (1 << 15))) != 0
             let hasMessageContent = (flags & ((1 << 18) | (1 << 19))) != 0
@@ -712,6 +748,9 @@ final class LocalBotProxyServer: ObservableObject {
         case "/users/@me/custom-themes":
             return HTTPResponse(status: 204, headers: ["Content-Type": "application/json"], body: Data())
 
+        case "/users/@me/badges":
+            return jsonResponse([])
+
         case "/users/@me/connections",
              "/users/@me/mfa/webauthn/credentials",
              "/users/@me/outbound-promotions/codes",
@@ -792,7 +831,7 @@ final class LocalBotProxyServer: ObservableObject {
             return HTTPResponse(status: 200, headers: ["Content-Type": "application/json"], body: Data())
 
         case "/ping":
-            return jsonResponse(["code": 0, "message": "OK", "version": "1.0.0", "isBotClient": true])
+            return jsonResponse(["code": 0, "message": "OK", "version": "1.0.1", "isBotClient": true])
 
         case "/popout":
             return await proxyArbitraryURL("https://canary.discord.com/popout", contentTypeFallback: "text/html; charset=utf-8")
@@ -825,6 +864,10 @@ final class LocalBotProxyServer: ObservableObject {
             }
             return await handleUserProfile(userId: segs[1], req: req)
         }
+        // /users/:id/badges
+        if segs.count == 3 && segs[0] == "users" && segs[2] == "badges" {
+            return jsonResponse([])
+        }
         // /guilds/:id/profile
         if segs.count >= 3 && segs[0] == "guilds" && segs[2] == "profile" {
             return await handleGuildProfile(guildId: segs[1], req: req)
@@ -854,7 +897,7 @@ final class LocalBotProxyServer: ObservableObject {
         urlReq.setValue(auth, forHTTPHeaderField: "Authorization")
         urlReq.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         do {
-            let (data, response) = try await urlSession.data(for: urlReq)
+            let (data, response) = try await noRedirectSession.data(for: urlReq)
             guard let http = response as? HTTPURLResponse else {
                 return jsonResponse(["message": "Upstream error"], status: 502)
             }
@@ -903,11 +946,12 @@ final class LocalBotProxyServer: ObservableObject {
         let comps = URLComponents(string: "http://localhost\(req.rawTarget)")
         let guildId = comps?.queryItems?.first(where: { $0.name == "guild_id" })?.value
         let botId = extractUserId(fromAuth: auth)
-        let isSelf = (botId == userId)
+        let resolvedUserId = (userId == "@me") ? (botId ?? "@me") : userId
+        let isSelf = (userId == "@me" || botId == resolvedUserId)
 
         var guildMember: [String: Any]? = nil
         if let gid = guildId, !gid.isEmpty {
-            let memberPath = isSelf ? "guilds/\(gid)/members/@me" : "guilds/\(gid)/members/\(userId)"
+            let memberPath = isSelf ? "guilds/\(gid)/members/@me" : "guilds/\(gid)/members/\(resolvedUserId)"
             if let mURL = URL(string: "https://canary.discord.com/api/v9/\(memberPath)") {
                 var mReq = URLRequest(url: mURL)
                 mReq.setValue(auth, forHTTPHeaderField: "Authorization")
@@ -930,7 +974,7 @@ final class LocalBotProxyServer: ObservableObject {
             }
         }
 
-        guard let uURL = URL(string: "https://canary.discord.com/api/v9/users/\(userId)") else {
+        guard let uURL = URL(string: "https://canary.discord.com/api/v9/users/\(resolvedUserId)") else {
             return jsonResponse(["message": "Bad user id"], status: 400)
         }
         var uReq = URLRequest(url: uURL)
@@ -1158,7 +1202,7 @@ final class LocalBotProxyServer: ObservableObject {
         }
 
         do {
-            let (data, response) = try await urlSession.data(for: urlReq)
+            let (data, response) = try await noRedirectSession.data(for: urlReq)
             guard let http = response as? HTTPURLResponse else {
                 return jsonResponse(["error": "Upstream returned no HTTP response"], status: 502)
             }

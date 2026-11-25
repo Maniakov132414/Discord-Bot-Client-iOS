@@ -85,7 +85,10 @@ final class BotWebController: ObservableObject {
             let encoded = (try? JSONEncoder().encode(token)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
             let js = """
             (function(){
-              try { window.localStorage.setItem('token', \(encoded)); } catch(e) {}
+              try {
+                window.localStorage.setItem('token', JSON.stringify(\(encoded)));
+                window.sessionStorage.setItem('currentShard', '0');
+              } catch(e) {}
             })();
             """
             ucc.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -93,7 +96,10 @@ final class BotWebController: ObservableObject {
         case .clear:
             let js = """
             (function(){
-              try { window.localStorage.removeItem('token'); } catch(e) {}
+              try {
+                window.localStorage.removeItem('token');
+                window.sessionStorage.removeItem('currentShard');
+              } catch(e) {}
             })();
             """
             ucc.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -104,12 +110,10 @@ final class BotWebController: ObservableObject {
 
         // 2. When connected to an external Custom Server URL, inject our patched dbc-web-bridge.js + dbc-mobile.css!
         if mode == .customServer {
-            if let bridgeURL = Bundle.main.resourceURL?.appendingPathComponent("Resources/dbc-assets/dbc-web-bridge.js"),
-               let bridgeJS = try? String(contentsOf: bridgeURL, encoding: .utf8) {
+            if let bridgeJS = LocalBotProxyServer.shared.getTextResource("dbc-assets/dbc-web-bridge.js") {
                 ucc.addUserScript(WKUserScript(source: bridgeJS, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             }
-            if let cssURL = Bundle.main.resourceURL?.appendingPathComponent("Resources/dbc-assets/dbc-mobile.css"),
-               let cssText = try? String(contentsOf: cssURL, encoding: .utf8) {
+            if let cssText = LocalBotProxyServer.shared.getTextResource("dbc-assets/dbc-mobile.css") {
                 let encodedCSS = (try? JSONEncoder().encode(cssText)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
                 let injectCSS = """
                 (function(){

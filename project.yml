@@ -1,5 +1,6 @@
 name: DiscordBotClient
 options:
+  bundleIdPrefix: com.maniakov
   deploymentTarget:
     iOS: "15.0"
   xcodeVersion: "26.0"
@@ -7,11 +8,10 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0.1"
+    CURRENT_PROJECT_VERSION: "2"
     GENERATE_INFOPLIST_FILE: "NO"
     APP_BUNDLE_ID: "com.maniakov.discordbotclient"
-    PRODUCT_BUNDLE_IDENTIFIER: "$(APP_BUNDLE_ID)"
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_IDENTITY: ""
     CODE_SIGNING_REQUIRED: "NO"
@@ -30,15 +30,12 @@ targets:
         excludes:
           - "**/*.md"
           - "Info.plist"
-          - "Resources/**"
-      - path: DiscordBotClient/Resources
-        type: folder
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(APP_BUNDLE_ID)"
         PRODUCT_NAME: DiscordBotClient
-        MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0.1"
+        CURRENT_PROJECT_VERSION: "2"
         GENERATE_INFOPLIST_FILE: "NO"
         INFOPLIST_FILE: DiscordBotClient/Info.plist
         LD_RUNPATH_SEARCH_PATHS:
