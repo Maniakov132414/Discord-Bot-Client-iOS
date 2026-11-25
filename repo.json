@@ -26,7 +26,7 @@
       "versionDate": "2026-11-25T19:45:00+07:00",
       "versionDescription": "v1.0.1 (Build 2): Gói WebBundle.json phẳng (khắc phục lỗi cài đặt ESign/Feather), sửa URL-encoded @me profile, token JSON.stringify, Keychain fallback -34018 và loại bỏ delay chạm WebView.",
       "downloadURL": "https://github.com/Maniakov132414/Discord-Bot-Client-iOS/releases/latest/download/DiscordBotClient.ipa",
-      "size": 4500000,
+      "size": 3634001,
       "versions": [
         {
           "version": "1.0.1",
@@ -36,7 +36,7 @@
           "localizedDescription": "v1.0.1 (Build 2): Flat WebBundle.json, URL-encoded @me profile, token JSON.stringify, Keychain fallback, zero ldid.",
           "versionDescription": "v1.0.1 (Build 2): Flat WebBundle.json, URL-encoded @me profile, token JSON.stringify, Keychain fallback, zero ldid.",
           "downloadURL": "https://github.com/Maniakov132414/Discord-Bot-Client-iOS/releases/latest/download/DiscordBotClient.ipa",
-          "size": 4500000,
+          "size": 3634001,
           "minOSVersion": "15.0"
         }
       ],
