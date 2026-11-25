@@ -64,18 +64,18 @@ jobs:
           print("Info.plist & Resources verified!")
           PY
 
-      - name: Archive & Package Unsigned / ldid Ad-Hoc IPA (Zero PlugIns)
+      - name: Build & Package Unsigned / ldid Ad-Hoc IPA (Zero PlugIns)
         run: |
           mkdir -p dist
-          xcodebuild -project DiscordBotClient.xcodeproj -scheme DiscordBotClient -configuration Release -showBuildSettings | grep -E "PRODUCT_BUNDLE_IDENTIFIER|APP_BUNDLE_ID|INFOPLIST_FILE|PRODUCT_NAME" || true
-          if ! xcodebuild archive \
+          xcodebuild build \
             -project DiscordBotClient.xcodeproj \
             -scheme DiscordBotClient \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath /tmp/dd-dbc \
-            -archivePath /tmp/DiscordBotClient.xcarchive \
             IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            DEPLOYMENT_POSTPROCESSING=YES \
+            STRIP_INSTALLED_PRODUCT=YES \
             APP_BUNDLE_ID=com.maniakov.discordbotclient \
             PRODUCT_BUNDLE_IDENTIFIER=com.maniakov.discordbotclient \
             MARKETING_VERSION=1.0.0 \
@@ -83,11 +83,12 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES; then
-            echo "Archive failed; inspecting built Info.plist:"
-            plutil -p /tmp/dd-dbc/Build/Intermediates.noindex/ArchiveIntermediates/DiscordBotClient/InstallationBuildProductsLocation/Applications/DiscordBotClient.app/Info.plist || true
-            exit 1
-          fi
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+          APP_PATH="/tmp/dd-dbc/Build/Products/Release-iphoneos/DiscordBotClient.app"
+          test -d "$APP_PATH"
+          plutil -p "$APP_PATH/Info.plist"
+          file "$APP_PATH/DiscordBotClient"
 
           cat > /tmp/dbc-entitlements.plist <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -105,7 +106,7 @@ jobs:
           EOF
 
           rm -rf /tmp/pkg-dbc && mkdir -p /tmp/pkg-dbc/Payload
-          cp -R /tmp/DiscordBotClient.xcarchive/Products/Applications/DiscordBotClient.app /tmp/pkg-dbc/Payload/DiscordBotClient.app
+          cp -R "$APP_PATH" /tmp/pkg-dbc/Payload/DiscordBotClient.app
           rm -rf /tmp/pkg-dbc/Payload/DiscordBotClient.app/PlugIns
           rm -rf /tmp/pkg-dbc/Payload/DiscordBotClient.app/_CodeSignature
           chmod +x /tmp/pkg-dbc/Payload/DiscordBotClient.app/DiscordBotClient
