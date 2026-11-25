@@ -26,7 +26,7 @@
       "versionDate": "2026-11-25T20:15:00+07:00",
       "versionDescription": "v2.0.0 (Build 3): Viết lại hoàn toàn bằng SwiftUI thuần + Gateway v10 + REST v10, lưu đa Bot trên thiết bị, siêu nhẹ và tương thích hoàn hảo ESign/Feather/SideStore/AltStore.",
       "downloadURL": "https://github.com/cocconne/discord-bot-client-web/releases/latest/download/DiscordBotClient.ipa",
-      "size": 1150000,
+      "size": 946046,
       "versions": [
         {
           "version": "2.0.0",
@@ -36,7 +36,7 @@
           "localizedDescription": "v2.0.0 (Build 3): Pure SwiftUI native Gateway v10 + REST v10 Discord Bot Client.",
           "versionDescription": "v2.0.0 (Build 3): Pure SwiftUI native Gateway v10 + REST v10 Discord Bot Client.",
           "downloadURL": "https://github.com/cocconne/discord-bot-client-web/releases/latest/download/DiscordBotClient.ipa",
-          "size": 1150000,
+          "size": 946046,
           "minOSVersion": "15.0"
         }
       ],
