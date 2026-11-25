@@ -1,6 +1,13 @@
 import SwiftUI
 
 struct EmojiPickerSheet: View {
+    enum PickerTab: Int, CaseIterable, Identifiable {
+        case serverAndBot = 0
+        case unicode = 1
+        case stickers = 2
+        var id: Int { rawValue }
+    }
+
     let currentGuild: DiscordGuild?
     let onInsertText: (String) -> Void
 
@@ -8,21 +15,23 @@ struct EmojiPickerSheet: View {
     @EnvironmentObject private var gateway: DiscordGatewayService
     @Environment(\.dismiss) private var dismiss
 
+    @State private var selectedTab: PickerTab = .serverAndBot
     @State private var searchQuery = ""
     @State private var quickInput = ""
     @State private var quickName = ""
     @State private var quickError: String?
 
     private let gridColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 6)
+    private let stickerColumns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
 
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                // Mode Switcher & Search
                 VStack(spacing: 10) {
-                    Picker("Kiểu chèn", selection: $vault.emojiInsertAsHyperlink) {
-                        Text("Emoji gốc <:name:id>").tag(false)
-                        Text("Hyperlink [name](cdn...)").tag(true)
+                    Picker("Danh mục", selection: $selectedTab) {
+                        Text("Máy chủ & Bot").tag(PickerTab.serverAndBot)
+                        Text("Emoji Phổ biến").tag(PickerTab.unicode)
+                        Text("Sticker").tag(PickerTab.stickers)
                     }
                     .pickerStyle(.segmented)
 
@@ -30,7 +39,7 @@ struct EmojiPickerSheet: View {
                         Image(systemName: "magnifyingglass")
                             .font(.caption)
                             .foregroundColor(vault.secondaryTextColor)
-                        TextField("Tìm emoji...", text: $searchQuery)
+                        TextField("Tìm emoji hoặc sticker...", text: $searchQuery)
                             .font(.subheadline)
                             .textFieldStyle(.plain)
                         if !searchQuery.isEmpty {
@@ -48,44 +57,51 @@ struct EmojiPickerSheet: View {
                     .background(vault.elevatedSurfaceColor)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                    // Quick Hyperlink Generator
-                    HStack(spacing: 6) {
-                        TextField("Dán URL hoặc Emoji ID...", text: $quickInput)
-                            .font(.caption)
-                            .textFieldStyle(.plain)
-                            .autocapitalization(.none)
-                            .disableAutocorrection(true)
-                            .padding(8)
-                            .background(vault.elevatedSurfaceColor)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                        TextField("Tên", text: $quickName)
-                            .font(.caption)
-                            .textFieldStyle(.plain)
-                            .frame(width: 72)
-                            .padding(8)
-                            .background(vault.elevatedSurfaceColor)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                        Button {
-                            insertQuickHyperlink()
-                        } label: {
-                            Image(systemName: "link.badge.plus")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(vault.accentColor)
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    if selectedTab == .serverAndBot {
+                        Picker("Kiểu chèn", selection: $vault.emojiInsertAsHyperlink) {
+                            Text("Emoji gốc <:name:id>").tag(false)
+                            Text("Hyperlink [name](cdn...)").tag(true)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(quickInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
+                        .pickerStyle(.segmented)
 
-                    if let err = quickError {
-                        Text(err)
-                            .font(.caption2)
-                            .foregroundColor(.red)
+                        HStack(spacing: 6) {
+                            TextField("Dán URL hoặc Emoji ID...", text: $quickInput)
+                                .font(.caption)
+                                .textFieldStyle(.plain)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                                .padding(8)
+                                .background(vault.elevatedSurfaceColor)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                            TextField("Tên", text: $quickName)
+                                .font(.caption)
+                                .textFieldStyle(.plain)
+                                .frame(width: 72)
+                                .padding(8)
+                                .background(vault.elevatedSurfaceColor)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                            Button {
+                                insertQuickHyperlink()
+                            } label: {
+                                Image(systemName: "link.badge.plus")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 7)
+                                    .background(vault.accentColor)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(quickInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+
+                        if let err = quickError {
+                            Text(err)
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                        }
                     }
                 }
                 .padding(12)
@@ -95,22 +111,103 @@ struct EmojiPickerSheet: View {
 
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
-                        if let g = currentGuild {
-                            let filtered = filterEmojis(g.emojis)
-                            if !filtered.isEmpty {
-                                emojiSection(title: "Máy chủ hiện tại (\(g.name))", emojis: filtered)
+                        switch selectedTab {
+                        case .serverAndBot:
+                            if let g = currentGuild {
+                                let filtered = filterEmojis(g.emojis)
+                                if !filtered.isEmpty {
+                                    emojiSection(title: "Máy chủ hiện tại (\(g.name))", emojis: filtered)
+                                }
                             }
-                        }
 
-                        let appFiltered = filterEmojis(gateway.applicationEmojis)
-                        if !appFiltered.isEmpty {
-                            emojiSection(title: "Emoji ứng dụng Bot", emojis: appFiltered)
-                        }
+                            let appFiltered = filterEmojis(gateway.applicationEmojis)
+                            if !appFiltered.isEmpty {
+                                emojiSection(title: "Emoji ứng dụng Bot", emojis: appFiltered)
+                            }
 
-                        ForEach(gateway.guilds.filter { $0.id != currentGuild?.id }) { otherGuild in
-                            let filtered = filterEmojis(otherGuild.emojis)
-                            if !filtered.isEmpty {
-                                emojiSection(title: otherGuild.name, emojis: filtered)
+                            ForEach(gateway.guilds.filter { $0.id != currentGuild?.id }) { otherGuild in
+                                let filtered = filterEmojis(otherGuild.emojis)
+                                if !filtered.isEmpty {
+                                    emojiSection(title: otherGuild.name, emojis: filtered)
+                                }
+                            }
+
+                        case .unicode:
+                            let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                            ForEach(UnicodeEmojiCatalog.categories) { cat in
+                                let items = q.isEmpty ? cat.items : cat.items.filter { $0.keywords.contains(q) }
+                                if !items.isEmpty {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text(cat.title.uppercased())
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundColor(vault.secondaryTextColor)
+
+                                        LazyVGrid(columns: gridColumns, spacing: 8) {
+                                            ForEach(items) { item in
+                                                Button {
+                                                    onInsertText(item.emoji)
+                                                    dismiss()
+                                                } label: {
+                                                    Text(item.emoji)
+                                                        .font(.system(size: 28))
+                                                        .frame(maxWidth: .infinity, minHeight: 42)
+                                                        .background(vault.surfaceColor.opacity(0.65))
+                                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                        case .stickers:
+                            let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                            let stickerGuilds = gateway.guilds.filter { !($0.stickers ?? []).isEmpty }
+                            if stickerGuilds.isEmpty {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "rectangle.portrait.on.rectangle.portrait")
+                                        .font(.largeTitle)
+                                        .foregroundColor(vault.secondaryTextColor)
+                                    Text("Chưa có Sticker nào trong các máy chủ của Bot.")
+                                        .font(.caption)
+                                        .foregroundColor(vault.secondaryTextColor)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 36)
+                            } else {
+                                ForEach(stickerGuilds) { g in
+                                    let items = (g.stickers ?? []).filter { q.isEmpty || $0.name.lowercased().contains(q) }
+                                    if !items.isEmpty {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Text(g.name.uppercased())
+                                                .font(.caption2.weight(.bold))
+                                                .foregroundColor(vault.secondaryTextColor)
+
+                                            LazyVGrid(columns: stickerColumns, spacing: 10) {
+                                                ForEach(items) { st in
+                                                    Button {
+                                                        onInsertText("\(st.markdownLink) ")
+                                                        dismiss()
+                                                    } label: {
+                                                        VStack(spacing: 4) {
+                                                            AnimatedEmojiImageView(url: st.imageURL, size: 68)
+                                                            Text(st.name)
+                                                                .font(.caption2)
+                                                                .foregroundColor(vault.secondaryTextColor)
+                                                                .lineLimit(1)
+                                                        }
+                                                        .padding(8)
+                                                        .frame(maxWidth: .infinity)
+                                                        .background(vault.surfaceColor)
+                                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                                    }
+                                                    .buttonStyle(.plain)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -118,7 +215,7 @@ struct EmojiPickerSheet: View {
                 }
                 .background(vault.backgroundColor)
             }
-            .navigationTitle("Chọn Emoji")
+            .navigationTitle("Emoji & Sticker")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

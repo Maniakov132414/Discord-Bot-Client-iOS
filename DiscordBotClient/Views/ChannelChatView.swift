@@ -94,6 +94,20 @@ struct ChannelChatView: View {
                 }
             }
         }
+        .onAppear {
+            gateway.activeViewingChannelId = channel.id
+            gateway.markChannelRead(channel.id, lastMessageId: messages.last?.id)
+        }
+        .onDisappear {
+            if gateway.activeViewingChannelId == channel.id {
+                gateway.activeViewingChannelId = nil
+            }
+        }
+        .onChange(of: messages.last?.id) { lastId in
+            if gateway.activeViewingChannelId == channel.id, let lid = lastId {
+                gateway.markChannelRead(channel.id, lastMessageId: lid)
+            }
+        }
         .task(id: channel.id) {
             await gateway.loadMessages(channelId: channel.id)
         }
@@ -160,6 +174,7 @@ struct ChannelChatView: View {
                 }
             )
             .environmentObject(vault)
+            .environmentObject(gateway)
         }
         .sheet(item: $reactionTarget) { msg in
             ReactionPickerSheet(
@@ -230,7 +245,7 @@ struct ChannelChatView: View {
         }
     }
 
-    // MARK: - Message Timeline
+    // MARK: - Message Timeline (Welcome Header + Date Dividers + Curved Reply Spine)
 
     private var timelineView: some View {
         ScrollViewReader { proxy in
@@ -254,13 +269,22 @@ struct ChannelChatView: View {
                             .padding(.vertical, 10)
                         }
                         .buttonStyle(.plain)
+                    } else {
+                        welcomeHeaderView
                     }
 
                     ForEach(Array(messages.enumerated()), id: \.element.id) { idx, msg in
                         let prev = idx > 0 ? messages[idx - 1] : nil
+                        if shouldShowDateDivider(msg, previous: prev), let d = msg.parsedTimestamp {
+                            dateDividerView(d)
+                        }
                         let grouped = isGroupedWithPrevious(msg, previous: prev)
-                        messageRow(msg, grouped: grouped)
-                            .id(msg.id)
+                        messageRow(msg, grouped: grouped, onScrollToRef: { refId in
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                proxy.scrollTo(refId, anchor: .center)
+                            }
+                        })
+                        .id(msg.id)
                     }
 
                     Color.clear
@@ -281,12 +305,85 @@ struct ChannelChatView: View {
         }
     }
 
+    private var welcomeHeaderView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if channel.type == 1 || channel.type == 3 {
+                let recipient = channel.recipients?.first
+                BotAvatarThumb(
+                    urlString: recipient?.avatarURL(size: 128)?.absoluteString,
+                    size: 64,
+                    accent: vault.accentColor
+                )
+                Text(channel.displayName)
+                    .font(.title2.weight(.bold))
+                    .foregroundColor(vault.primaryTextColor)
+                if let uname = recipient?.username {
+                    Text("@\(uname)")
+                        .font(.subheadline)
+                        .foregroundColor(vault.secondaryTextColor)
+                }
+                Text("Đây là phần mở đầu lịch sử tin nhắn trực tiếp với \(channel.displayName).")
+                    .font(.caption)
+                    .foregroundColor(vault.secondaryTextColor)
+            } else {
+                ZStack {
+                    Circle()
+                        .fill(vault.elevatedSurfaceColor)
+                        .frame(width: 58, height: 58)
+                    Image(systemName: channel.sfSymbolName)
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundColor(vault.primaryTextColor)
+                }
+                Text("Chào mừng đến với #\(channel.displayName)!")
+                    .font(.title3.weight(.bold))
+                    .foregroundColor(vault.primaryTextColor)
+                if let topic = channel.topic, !topic.isEmpty {
+                    Text(topic)
+                        .font(.caption)
+                        .foregroundColor(vault.secondaryTextColor)
+                } else {
+                    Text("Đây là phần mở đầu của kênh #\(channel.displayName).")
+                        .font(.caption)
+                        .foregroundColor(vault.secondaryTextColor)
+                }
+            }
+        }
+        .padding(.vertical, 14)
+        .padding(.horizontal, 4)
+    }
+
+    private func shouldShowDateDivider(_ msg: DiscordMessage, previous: DiscordMessage?) -> Bool {
+        guard let d2 = msg.parsedTimestamp else { return false }
+        guard let prev = previous, let d1 = prev.parsedTimestamp else { return true }
+        return !Calendar.current.isDate(d1, inSameDayAs: d2)
+    }
+
+    private static let dateDividerFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "vi_VN")
+        f.dateFormat = "d 'tháng' M, yyyy"
+        return f
+    }()
+
+    private func dateDividerView(_ date: Date) -> some View {
+        HStack(spacing: 8) {
+            Rectangle().fill(vault.dividerColor).frame(height: 1)
+            Text(Self.dateDividerFormatter.string(from: date))
+                .font(.caption2.weight(.semibold))
+                .foregroundColor(vault.secondaryTextColor)
+                .fixedSize()
+            Rectangle().fill(vault.dividerColor).frame(height: 1)
+        }
+        .padding(.vertical, 8)
+    }
+
     private func isGroupedWithPrevious(_ msg: DiscordMessage, previous: DiscordMessage?) -> Bool {
         guard let prev = previous,
               prev.author.id == msg.author.id,
               msg.referencedMessage == nil,
               let d1 = prev.parsedTimestamp,
-              let d2 = msg.parsedTimestamp else {
+              let d2 = msg.parsedTimestamp,
+              Calendar.current.isDate(d1, inSameDayAs: d2) else {
             return false
         }
         return d2.timeIntervalSince(d1) < 300
@@ -303,28 +400,36 @@ struct ChannelChatView: View {
         return DiscordMember(user: msg.author, nick: nil, roles: [], avatar: nil, joinedAt: nil)
     }
 
-    private func messageRow(_ msg: DiscordMessage, grouped: Bool) -> some View {
+    private func messageRow(_ msg: DiscordMessage, grouped: Bool, onScrollToRef: @escaping (String) -> Void) -> some View {
         let memberObj = resolvedMember(for: msg)
         let displayName = memberObj.displayName(fallback: msg.author.displayName)
         let roleColor = memberObj.highestRoleColor(in: guild?.roles ?? []) ?? vault.primaryTextColor
         let avatarURL = memberObj.avatarURL(guildId: guild?.id ?? msg.guildId, size: 128) ?? msg.author.avatarURL(size: 128)
 
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 3) {
             if let ref = msg.referencedMessage {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrowshape.turn.up.left.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(vault.secondaryTextColor)
-                    Text(ref.author?.displayName ?? "Tin nhắn gốc")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundColor(vault.accentColor)
-                    Text(ref.content?.isEmpty == false ? ref.content! : "[Đính kèm]")
-                        .font(.caption2)
-                        .foregroundColor(vault.secondaryTextColor)
-                        .lineLimit(1)
+                Button {
+                    onScrollToRef(ref.id)
+                } label: {
+                    HStack(spacing: 6) {
+                        ReplySpineView(color: vault.secondaryTextColor.opacity(0.6))
+                            .frame(width: 24, height: 12)
+                            .padding(.leading, 18)
+
+                        Text("@\(ref.author?.displayName ?? "Tin nhắn gốc")")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(vault.accentColor)
+                            .lineLimit(1)
+
+                        Text(ref.content?.isEmpty == false ? ref.content! : "[Đính kèm]")
+                            .font(.caption2)
+                            .foregroundColor(vault.secondaryTextColor)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.top, 4)
                 }
-                .padding(.leading, 48)
-                .padding(.top, 4)
+                .buttonStyle(.plain)
             }
 
             HStack(alignment: .top, spacing: 10) {
@@ -392,6 +497,14 @@ struct ChannelChatView: View {
                             mentions: msg.mentions,
                             members: members
                         )
+                    }
+
+                    if let stickers = msg.stickerItems, !stickers.isEmpty {
+                        HStack(spacing: 8) {
+                            ForEach(stickers) { st in
+                                AnimatedEmojiImageView(url: st.imageURL, size: 136)
+                            }
+                        }
                     }
 
                     ForEach(msg.attachments) { att in
@@ -608,6 +721,21 @@ struct ChannelChatView: View {
                     }
                     .buttonStyle(.plain)
                 }
+
+                // 1-tap quick add reaction pill
+                Button {
+                    reactionTarget = message
+                } label: {
+                    Image(systemName: "face.smiling")
+                        .font(.caption)
+                        .foregroundColor(vault.secondaryTextColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(vault.surfaceColor)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().strokeBorder(vault.dividerColor, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -747,7 +875,7 @@ struct ChannelChatView: View {
         }
     }
 
-    // MARK: - Composer
+    // MARK: - Discord Pill Composer
 
     private var composerContainer: some View {
         VStack(spacing: 6) {
@@ -889,32 +1017,39 @@ struct ChannelChatView: View {
                     }
                 } label: {
                     Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 28))
+                        .font(.system(size: 30))
                         .foregroundColor(vault.secondaryTextColor)
                 }
 
-                Button {
-                    showEmojiPicker = true
-                } label: {
-                    Image(systemName: "face.smiling")
-                        .font(.system(size: 24))
-                        .foregroundColor(vault.secondaryTextColor)
-                }
-                .buttonStyle(.plain)
+                // Discord iOS Pill [ TextField | Emoji Button ]
+                HStack(alignment: .bottom, spacing: 6) {
+                    let placeholder = (channel.type == 1 || channel.type == 3)
+                        ? "Nhắn tin đến \(channel.displayName)..."
+                        : "Nhắn vào #\(channel.displayName)..."
 
-                Group {
-                    if #available(iOS 16.0, *) {
-                        TextField("Nhắn vào #\(channel.displayName)...", text: $composerText, axis: .vertical)
-                            .lineLimit(1...5)
-                    } else {
-                        TextField("Nhắn vào #\(channel.displayName)...", text: $composerText)
+                    Group {
+                        if #available(iOS 16.0, *) {
+                            TextField(placeholder, text: $composerText, axis: .vertical)
+                                .lineLimit(1...5)
+                        } else {
+                            TextField(placeholder, text: $composerText)
+                        }
                     }
+                    .textFieldStyle(.plain)
+
+                    Button {
+                        showEmojiPicker = true
+                    } label: {
+                        Image(systemName: "face.smiling")
+                            .font(.system(size: 21))
+                            .foregroundColor(vault.secondaryTextColor)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .textFieldStyle(.plain)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .padding(.vertical, 8)
                 .background(vault.elevatedSurfaceColor)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
                 let canSend = !isSending && (
                     !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
@@ -979,6 +1114,24 @@ struct ChannelChatView: View {
             composerText = ""
         } catch {
             sendError = error.localizedDescription
+        }
+    }
+}
+
+private struct ReplySpineView: View {
+    let color: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            Path { path in
+                let w = geo.size.width
+                let h = geo.size.height
+                path.move(to: CGPoint(x: 2, y: h))
+                path.addLine(to: CGPoint(x: 2, y: 6))
+                path.addQuadCurve(to: CGPoint(x: 8, y: 2), control: CGPoint(x: 2, y: 2))
+                path.addLine(to: CGPoint(x: w, y: 2))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
         }
     }
 }
@@ -1080,6 +1233,12 @@ private struct EmbedCardView: View {
 }
 
 private struct ReactionPickerSheet: View {
+    enum ReactTab: Int, CaseIterable, Identifiable {
+        case serverAndBot = 0
+        case unicode = 1
+        var id: Int { rawValue }
+    }
+
     let currentGuild: DiscordGuild?
     let existingReactions: [DiscordReaction]
     let onSelect: (String, Bool) -> Void
@@ -1088,90 +1247,146 @@ private struct ReactionPickerSheet: View {
     @EnvironmentObject private var gateway: DiscordGatewayService
     @Environment(\.dismiss) private var dismiss
 
-    @State private var customEmoji = ""
+    @State private var selectedTab: ReactTab = .serverAndBot
     @State private var searchQuery = ""
 
     private let cols = Array(repeating: GridItem(.flexible(), spacing: 8), count: 6)
 
     var body: some View {
         NavigationView {
-            List {
-                Section("Nhập biểu cảm bất kỳ") {
-                    HStack {
-                        TextField("Dán 1 emoji hoặc name:id...", text: $customEmoji)
-                        Button("Gửi") {
-                            let clean = customEmoji.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !clean.isEmpty {
-                                onSelect(clean, false)
-                                dismiss()
+            VStack(spacing: 0) {
+                VStack(spacing: 10) {
+                    // 8 Quick-React Buttons (1 tap!)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(UnicodeEmojiCatalog.quickReacts) { entry in
+                                let existing = existingReactions.first(where: { $0.emoji.name == entry.emoji && $0.emoji.id == nil })
+                                Button {
+                                    onSelect(entry.emoji, existing?.me ?? false)
+                                    dismiss()
+                                } label: {
+                                    Text(entry.emoji)
+                                        .font(.system(size: 24))
+                                        .frame(width: 40, height: 40)
+                                        .background((existing?.me ?? false) ? vault.accentColor.opacity(0.25) : vault.elevatedSurfaceColor)
+                                        .clipShape(Circle())
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
-                        .disabled(customEmoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                }
 
-                if !existingReactions.isEmpty {
-                    Section("Biểu cảm hiện có trên tin nhắn") {
-                        ForEach(existingReactions) { rxn in
-                            Button {
-                                onSelect(rxn.emoji.apiIdentifier, rxn.me)
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 8) {
-                                    if let url = rxn.emoji.imageURL {
-                                        AnimatedEmojiImageView(url: url, size: 20)
+                    Picker("Danh mục", selection: $selectedTab) {
+                        Text("Máy chủ & Bot").tag(ReactTab.serverAndBot)
+                        Text("Emoji Phổ biến").tag(ReactTab.unicode)
+                    }
+                    .pickerStyle(.segmented)
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.caption)
+                            .foregroundColor(vault.secondaryTextColor)
+                        TextField("Tìm emoji...", text: $searchQuery)
+                            .font(.subheadline)
+                            .textFieldStyle(.plain)
+                    }
+                    .padding(8)
+                    .background(vault.elevatedSurfaceColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+                .padding(12)
+                .background(vault.surfaceColor)
+
+                Divider().background(vault.dividerColor)
+
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        if !existingReactions.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("ĐANG CÓ TRÊN TIN NHẮN")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundColor(vault.secondaryTextColor)
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 8) {
+                                        ForEach(existingReactions) { rxn in
+                                            Button {
+                                                onSelect(rxn.emoji.apiIdentifier, rxn.me)
+                                                dismiss()
+                                            } label: {
+                                                HStack(spacing: 4) {
+                                                    if let url = rxn.emoji.imageURL {
+                                                        AnimatedEmojiImageView(url: url, size: 18)
+                                                    } else {
+                                                        Text(rxn.emoji.name ?? "?").font(.subheadline)
+                                                    }
+                                                    Text("\(rxn.count)")
+                                                        .font(.caption2.weight(.bold))
+                                                }
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(rxn.me ? vault.accentColor.opacity(0.22) : vault.surfaceColor)
+                                                .clipShape(Capsule())
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
                                     }
-                                    Text(rxn.emoji.displayLabel)
-                                    Spacer()
-                                    Text(rxn.me ? "Bỏ chọn (\(rxn.count))" : "Thêm (\(rxn.count))")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
                                 }
                             }
                         }
-                    }
-                }
 
-                let serverEmojis = (currentGuild?.emojis ?? [])
-                    .filter { searchQuery.isEmpty || $0.name.lowercased().contains(searchQuery.lowercased()) }
-                if !serverEmojis.isEmpty {
-                    Section("Emoji của máy chủ") {
-                        LazyVGrid(columns: cols, spacing: 8) {
-                            ForEach(serverEmojis) { em in
-                                Button {
-                                    onSelect(em.apiIdentifier, false)
-                                    dismiss()
-                                } label: {
-                                    AnimatedEmojiImageView(url: em.imageURL, size: 30)
+                        if selectedTab == .serverAndBot {
+                            let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                            if let g = currentGuild {
+                                let serverEmojis = g.emojis.filter { q.isEmpty || $0.name.lowercased().contains(q) }
+                                if !serverEmojis.isEmpty {
+                                    customEmojiGridSection(title: "Máy chủ hiện tại", emojis: serverEmojis)
                                 }
-                                .buttonStyle(.plain)
+                            }
+                            let appEmojis = gateway.applicationEmojis.filter { q.isEmpty || $0.name.lowercased().contains(q) }
+                            if !appEmojis.isEmpty {
+                                customEmojiGridSection(title: "Emoji ứng dụng Bot", emojis: appEmojis)
+                            }
+                            ForEach(gateway.guilds.filter { $0.id != currentGuild?.id }) { otherGuild in
+                                let otherEmojis = otherGuild.emojis.filter { q.isEmpty || $0.name.lowercased().contains(q) }
+                                if !otherEmojis.isEmpty {
+                                    customEmojiGridSection(title: otherGuild.name, emojis: otherEmojis)
+                                }
+                            }
+                        } else {
+                            let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                            ForEach(UnicodeEmojiCatalog.categories) { cat in
+                                let items = q.isEmpty ? cat.items : cat.items.filter { $0.keywords.contains(q) }
+                                if !items.isEmpty {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text(cat.title.uppercased())
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundColor(vault.secondaryTextColor)
+                                        LazyVGrid(columns: cols, spacing: 8) {
+                                            ForEach(items) { item in
+                                                Button {
+                                                    let mine = existingReactions.first(where: { $0.emoji.name == item.emoji && $0.emoji.id == nil })?.me ?? false
+                                                    onSelect(item.emoji, mine)
+                                                    dismiss()
+                                                } label: {
+                                                    Text(item.emoji)
+                                                        .font(.system(size: 26))
+                                                        .frame(maxWidth: .infinity, minHeight: 40)
+                                                        .background(vault.surfaceColor.opacity(0.7))
+                                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
-                        .padding(.vertical, 4)
                     }
+                    .padding(12)
                 }
-
-                let appEmojis = gateway.applicationEmojis
-                    .filter { searchQuery.isEmpty || $0.name.lowercased().contains(searchQuery.lowercased()) }
-                if !appEmojis.isEmpty {
-                    Section("Emoji ứng dụng Bot") {
-                        LazyVGrid(columns: cols, spacing: 8) {
-                            ForEach(appEmojis) { em in
-                                Button {
-                                    onSelect(em.apiIdentifier, false)
-                                    dismiss()
-                                } label: {
-                                    AnimatedEmojiImageView(url: em.imageURL, size: 30)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
+                .background(vault.backgroundColor)
             }
-            .searchable(text: $searchQuery, prompt: "Tìm emoji...")
-            .navigationTitle("Biểu cảm")
+            .navigationTitle("Chọn biểu cảm")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -1180,6 +1395,30 @@ private struct ReactionPickerSheet: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private func customEmojiGridSection(title: String, emojis: [DiscordEmoji]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.bold))
+                .foregroundColor(vault.secondaryTextColor)
+            LazyVGrid(columns: cols, spacing: 8) {
+                ForEach(emojis) { em in
+                    Button {
+                        let mine = existingReactions.first(where: { $0.emoji.apiIdentifier == em.apiIdentifier })?.me ?? false
+                        onSelect(em.apiIdentifier, mine)
+                        dismiss()
+                    } label: {
+                        AnimatedEmojiImageView(url: em.imageURL, size: 32)
+                            .padding(5)
+                            .frame(maxWidth: .infinity)
+                            .background(vault.surfaceColor.opacity(0.75))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 }
 

@@ -110,7 +110,7 @@ struct AnimatedEmojiImageView: View {
     private func loadIfNeeded() async {
         guard let url = url else { return }
         let key = url.absoluteString
-        if let cached = EmojiImageCache.shared.image(forKey: key) {
+        if let cached = EmojiImageCache.shared.image(for: key) {
             loadedImage = cached
             return
         }
@@ -119,7 +119,7 @@ struct AnimatedEmojiImageView: View {
         req.timeoutInterval = 15
         if let (data, _) = try? await URLSession.shared.data(for: req),
            let decoded = EmojiImageCache.decodeImage(from: data) {
-            EmojiImageCache.shared.store(decoded, forKey: key)
+            EmojiImageCache.shared.store(decoded, for: key)
             await MainActor.run {
                 loadedImage = decoded
             }

@@ -1,5 +1,7 @@
 import Foundation
 import SwiftUI
+import UIKit
+import UserNotifications
 import Combine
 
 enum GatewayConnectionState: Equatable {
@@ -26,6 +28,16 @@ enum GatewayConnectionState: Equatable {
     }
 }
 
+struct InAppNotificationBanner: Identifiable, Equatable {
+    let id = UUID()
+    let channel: DiscordChannel
+    let guild: DiscordGuild?
+    let title: String
+    let subtitle: String
+    let avatarURL: URL?
+    let timestamp: Date
+}
+
 @MainActor
 final class DiscordGatewayService: ObservableObject {
     static let shared = DiscordGatewayService()
@@ -46,6 +58,15 @@ final class DiscordGatewayService: ObservableObject {
     @Published var loadingChannelIds: Set<String> = []
     @Published var hasMoreOlderByChannel: [String: Bool] = [:]
 
+    // Real-time Notifications & Unread Tracking
+    @Published var activeViewingChannelId: String?
+    @Published var unreadCountByChannel: [String: Int] = [:]
+    @Published var mentionCountByChannel: [String: Int] = [:]
+    @Published var lastMessageByChannel: [String: DiscordMessage] = [:]
+    @Published var activeToastBanner: InAppNotificationBanner?
+    @Published var pendingTabSelection: Int?
+    @Published var pendingJumpTarget: (channel: DiscordChannel, guild: DiscordGuild?)?
+
     private let defaultGatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
     private let unprivilegedIntents: Int64 = 3_243_773
     private let rest = DiscordRESTClient.shared
@@ -57,7 +78,9 @@ final class DiscordGatewayService: ObservableObject {
     private var heartbeatTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
     private var typingCleanupTask: Task<Void, Never>?
+    private var toastDismissTask: Task<Void, Never>?
 
+    private var activeBotAccountId: String = ""
     private var activeToken: String = ""
     private var activeIntents: Int64 = 3_243_773
     private var forcedUnprivileged = false
@@ -85,11 +108,78 @@ final class DiscordGatewayService: ObservableObject {
 
     var currentToken: String { activeToken }
 
+    var totalUnreadDMCount: Int {
+        dmChannels.reduce(0) { $0 + (unreadCountByChannel[$1.id] ?? 0) }
+    }
+
+    var totalGuildMentionCount: Int {
+        guilds.reduce(0) { $0 + guildMentionCount($1.id) }
+    }
+
+    func guildMentionCount(_ guildId: String) -> Int {
+        guard let g = guilds.first(where: { $0.id == guildId }) else { return 0 }
+        return g.channels.reduce(0) { $0 + (mentionCountByChannel[$1.id] ?? 0) }
+    }
+
+    func guildHasUnread(_ guildId: String) -> Bool {
+        guard let g = guilds.first(where: { $0.id == guildId }) else { return false }
+        return g.channels.contains { (unreadCountByChannel[$0.id] ?? 0) > 0 }
+    }
+
+    func markChannelRead(_ channelId: String, lastMessageId: String? = nil) {
+        unreadCountByChannel[channelId] = 0
+        mentionCountByChannel[channelId] = 0
+        let msgId = lastMessageId ?? messagesByChannel[channelId]?.last?.id ?? lastMessageByChannel[channelId]?.id
+        let botId = botUser?.id ?? activeBotAccountId
+        if let msgId = msgId, !botId.isEmpty {
+            BotVaultStore.shared.setLastReadMessageId(msgId, channelId: channelId, for: botId)
+        }
+    }
+
+    func removeDMChannel(id channelId: String, vault: BotVaultStore) {
+        dmChannels.removeAll(where: { $0.id == channelId })
+        unreadCountByChannel.removeValue(forKey: channelId)
+        mentionCountByChannel.removeValue(forKey: channelId)
+        let botId = botUser?.id ?? activeBotAccountId
+        if !botId.isEmpty {
+            vault.saveDMChannels(dmChannels, for: botId)
+        }
+    }
+
+    func jumpToChannel(channelId: String, guildId: String?) {
+        if let gid = guildId,
+           let g = guilds.first(where: { $0.id == gid }),
+           let ch = g.channels.first(where: { $0.id == channelId }) {
+            pendingJumpTarget = (ch, g)
+            pendingTabSelection = 0
+            return
+        }
+        if let dm = dmChannels.first(where: { $0.id == channelId }) {
+            pendingJumpTarget = (dm, nil)
+            pendingTabSelection = 1
+            return
+        }
+        Task {
+            if !activeToken.isEmpty, let fetched = try? await rest.fetchChannel(channelId: channelId, token: activeToken) {
+                if fetched.guildId == nil {
+                    upsertDMChannel(fetched, moveToTop: true)
+                    pendingJumpTarget = (fetched, nil)
+                    pendingTabSelection = 1
+                } else if let gid = fetched.guildId, let g = guilds.first(where: { $0.id == gid }) {
+                    pendingJumpTarget = (fetched, g)
+                    pendingTabSelection = 0
+                }
+            }
+        }
+    }
+
     func connect(account: SavedBotAccount, vault: BotVaultStore) async {
         let clean = BotVaultStore.normalizeToken(account.token)
         guard !clean.isEmpty else { return }
 
-        disconnect(keepData: false)
+        let sameBot = (activeBotAccountId == account.id)
+        disconnect(keepData: sameBot)
+        activeBotAccountId = account.id
         activeToken = clean
         forcedUnprivileged = false
         intentWarningBanner = nil
@@ -98,6 +188,12 @@ final class DiscordGatewayService: ObservableObject {
         totalShards = max(1, vault.totalShards)
         shouldStayConnected = true
         connectionState = .connecting
+
+        // Hydrate persisted DM list immediately so tab Tin nhắn is never empty across reconnects
+        let persistedDMs = vault.savedDMChannels(for: account.id)
+        if !persistedDMs.isEmpty {
+            mergeDMChannels(persistedDMs)
+        }
 
         do {
             let app = try await rest.fetchCurrentApplication(token: clean)
@@ -157,6 +253,9 @@ final class DiscordGatewayService: ObservableObject {
             messagesByChannel = [:]
             membersByGuild = [:]
             typingUsersByChannel = [:]
+            unreadCountByChannel = [:]
+            mentionCountByChannel = [:]
+            lastMessageByChannel = [:]
             selectedGuildId = nil
             selectedChannelId = nil
             botUser = nil
@@ -464,13 +563,22 @@ final class DiscordGatewayService: ObservableObject {
             }
             if let userObj = dict["user"], let u: DiscordUser = decodeJSON(userObj) {
                 self.botUser = u
+                self.activeBotAccountId = u.id
             }
+            let botId = botUser?.id ?? activeBotAccountId
+            let saved = BotVaultStore.shared.savedDMChannels(for: botId)
+            var readyPrivs: [DiscordChannel] = []
             if let privs = dict["private_channels"] as? [[String: Any]] {
-                self.dmChannels = privs.compactMap { decodeJSON($0) }
+                readyPrivs = privs.compactMap { decodeJSON($0) }
+            }
+            mergeDMChannels(readyPrivs + saved)
+            if !botId.isEmpty {
+                BotVaultStore.shared.saveDMChannels(dmChannels, for: botId)
             }
             connectionState = .connected
             statusError = nil
             await loadApplicationEmojis()
+            await hydrateRecentDMsInBackground()
 
         case "RESUMED":
             connectionState = .connected
@@ -509,6 +617,9 @@ final class DiscordGatewayService: ObservableObject {
                 merged.icon = updated.icon
                 merged.roles = updated.roles.isEmpty ? merged.roles : updated.roles
                 merged.emojis = updated.emojis.isEmpty ? merged.emojis : updated.emojis
+                if let stickers = updated.stickers, !stickers.isEmpty {
+                    merged.stickers = stickers
+                }
                 guilds[idx] = merged
             }
 
@@ -518,6 +629,13 @@ final class DiscordGatewayService: ObservableObject {
                   let emojisArr = dict["emojis"] as? [[String: Any]],
                   let gIdx = guilds.firstIndex(where: { $0.id == gid }) else { return }
             guilds[gIdx].emojis = emojisArr.compactMap { decodeJSON($0) }
+
+        case "GUILD_STICKERS_UPDATE":
+            guard let dict = payload as? [String: Any],
+                  let gid = dict["guild_id"] as? String,
+                  let stickersArr = dict["stickers"] as? [[String: Any]],
+                  let gIdx = guilds.firstIndex(where: { $0.id == gid }) else { return }
+            guilds[gIdx].stickers = stickersArr.compactMap { decodeJSON($0) }
 
         case "GUILD_DELETE":
             if let dict = payload as? [String: Any], let gid = dict["id"] as? String {
@@ -531,9 +649,7 @@ final class DiscordGatewayService: ObservableObject {
             guard let dict = payload as? [String: Any],
                   let ch: DiscordChannel = decodeJSON(dict) else { return }
             if ch.type == 1 || ch.type == 3 {
-                if !dmChannels.contains(where: { $0.id == ch.id }) {
-                    dmChannels.insert(ch, at: 0)
-                }
+                upsertDMChannel(ch, moveToTop: true)
             } else if let gid = ch.guildId, let gIdx = guilds.firstIndex(where: { $0.id == gid }) {
                 if !guilds[gIdx].channels.contains(where: { $0.id == ch.id }) {
                     guilds[gIdx].channels.append(ch)
@@ -542,11 +658,14 @@ final class DiscordGatewayService: ObservableObject {
 
         case "CHANNEL_UPDATE", "THREAD_UPDATE":
             guard let dict = payload as? [String: Any],
-                  let ch: DiscordChannel = decodeJSON(dict),
-                  let gid = ch.guildId,
-                  let gIdx = guilds.firstIndex(where: { $0.id == gid }),
-                  let cIdx = guilds[gIdx].channels.firstIndex(where: { $0.id == ch.id }) else { return }
-            guilds[gIdx].channels[cIdx] = ch
+                  let ch: DiscordChannel = decodeJSON(dict) else { return }
+            if ch.type == 1 || ch.type == 3 {
+                upsertDMChannel(ch, moveToTop: false)
+            } else if let gid = ch.guildId,
+                      let gIdx = guilds.firstIndex(where: { $0.id == gid }),
+                      let cIdx = guilds[gIdx].channels.firstIndex(where: { $0.id == ch.id }) {
+                guilds[gIdx].channels[cIdx] = ch
+            }
 
         case "CHANNEL_DELETE", "THREAD_DELETE":
             guard let dict = payload as? [String: Any],
@@ -555,7 +674,7 @@ final class DiscordGatewayService: ObservableObject {
                let gIdx = guilds.firstIndex(where: { $0.id == gid }) {
                 guilds[gIdx].channels.removeAll(where: { $0.id == cid })
             }
-            dmChannels.removeAll(where: { $0.id == cid })
+            removeDMChannel(id: cid, vault: BotVaultStore.shared)
 
         case "MESSAGE_CREATE":
             guard let dict = payload as? [String: Any],
@@ -565,11 +684,19 @@ final class DiscordGatewayService: ObservableObject {
                 arr.append(msg)
                 messagesByChannel[msg.channelId] = arr
             }
+            lastMessageByChannel[msg.channelId] = msg
             harvestMember(from: msg)
+
+            if msg.guildId == nil {
+                handleIncomingDMMessage(msg)
+            }
+
             if var typers = typingUsersByChannel[msg.channelId] {
                 typers.removeValue(forKey: msg.author.id)
                 typingUsersByChannel[msg.channelId] = typers
             }
+
+            handleNotificationForNewMessage(msg)
 
         case "MESSAGE_UPDATE":
             guard let dict = payload as? [String: Any],
@@ -580,18 +707,10 @@ final class DiscordGatewayService: ObservableObject {
             if let full: DiscordMessage = decodeJSON(dict) {
                 arr[idx] = full
             } else {
-                if let content = dict["content"] as? String {
-                    arr[idx].content = content
-                }
-                if let edited = dict["edited_timestamp"] as? String {
-                    arr[idx].editedTimestamp = edited
-                }
-                if let pinned = dict["pinned"] as? Bool {
-                    arr[idx].pinned = pinned
-                }
-                if let flags = dict["flags"] as? Int {
-                    arr[idx].flags = flags
-                }
+                if let content = dict["content"] as? String { arr[idx].content = content }
+                if let edited = dict["edited_timestamp"] as? String { arr[idx].editedTimestamp = edited }
+                if let pinned = dict["pinned"] as? Bool { arr[idx].pinned = pinned }
+                if let flags = dict["flags"] as? Int { arr[idx].flags = flags }
                 if let embedsRaw = dict["embeds"], let embeds: [DiscordEmbed] = decodeJSON(embedsRaw) {
                     arr[idx].embeds = embeds
                 }
@@ -600,6 +719,9 @@ final class DiscordGatewayService: ObservableObject {
                 }
             }
             messagesByChannel[cid] = arr
+            if arr.last?.id == mid {
+                lastMessageByChannel[cid] = arr[idx]
+            }
 
         case "MESSAGE_DELETE":
             guard let dict = payload as? [String: Any],
@@ -620,8 +742,11 @@ final class DiscordGatewayService: ObservableObject {
                   let mid = dict["message_id"] as? String,
                   let uid = dict["user_id"] as? String,
                   let emojiRaw = dict["emoji"],
-                  let emoji: DiscordPartialEmoji = decodeJSON(emojiRaw),
-                  var arr = messagesByChannel[cid],
+                  let emoji: DiscordPartialEmoji = decodeJSON(emojiRaw) else { return }
+            if dict["guild_id"] == nil && !dmChannels.contains(where: { $0.id == cid }) {
+                Task { await ensureDMChannelExists(channelId: cid) }
+            }
+            guard var arr = messagesByChannel[cid],
                   let idx = arr.firstIndex(where: { $0.id == mid }) else { return }
             var rxns = arr[idx].reactions ?? []
             let isMe = (uid == botUser?.id)
@@ -660,12 +785,16 @@ final class DiscordGatewayService: ObservableObject {
                   let cid = dict["channel_id"] as? String,
                   let uid = dict["user_id"] as? String,
                   uid != botUser?.id else { return }
+            if dict["guild_id"] == nil && !dmChannels.contains(where: { $0.id == cid }) {
+                Task { await ensureDMChannelExists(channelId: cid) }
+            }
             let memberDict = dict["member"] as? [String: Any]
             let userDict = memberDict?["user"] as? [String: Any]
             let name = (memberDict?["nick"] as? String)
                 ?? (userDict?["global_name"] as? String)
                 ?? (userDict?["username"] as? String)
                 ?? membersByGuild[dict["guild_id"] as? String ?? ""]?.first(where: { $0.user?.id == uid })?.displayName()
+                ?? dmChannels.first(where: { $0.id == cid })?.recipients?.first?.displayName
                 ?? "Ai đó"
             var map = typingUsersByChannel[cid] ?? [:]
             map[name] = Date().addingTimeInterval(8)
@@ -713,6 +842,202 @@ final class DiscordGatewayService: ObservableObject {
         }
     }
 
+    // MARK: - DM Hydration & Notifications
+
+    private func mergeDMChannels(_ incoming: [DiscordChannel]) {
+        for ch in incoming {
+            upsertDMChannel(ch, moveToTop: false, persist: false)
+        }
+    }
+
+    private func upsertDMChannel(_ channel: DiscordChannel, moveToTop: Bool, persist: Bool = true) {
+        if let idx = dmChannels.firstIndex(where: { $0.id == channel.id }) {
+            var merged = dmChannels[idx]
+            if let newRecips = channel.recipients, !newRecips.isEmpty {
+                merged.recipients = newRecips
+            }
+            if let lastId = channel.lastMessageId, !lastId.isEmpty {
+                merged.lastMessageId = lastId
+            }
+            if let name = channel.name, !name.isEmpty {
+                merged.name = name
+            }
+            if moveToTop && idx != 0 {
+                dmChannels.remove(at: idx)
+                dmChannels.insert(merged, at: 0)
+            } else {
+                dmChannels[idx] = merged
+            }
+        } else {
+            if moveToTop {
+                dmChannels.insert(channel, at: 0)
+            } else {
+                dmChannels.append(channel)
+            }
+        }
+        if persist {
+            let botId = botUser?.id ?? activeBotAccountId
+            if !botId.isEmpty {
+                BotVaultStore.shared.saveDMChannels(dmChannels, for: botId)
+            }
+        }
+    }
+
+    private func handleIncomingDMMessage(_ msg: DiscordMessage) {
+        let isFromBot = (msg.author.id == botUser?.id)
+        if let idx = dmChannels.firstIndex(where: { $0.id == msg.channelId }) {
+            var updated = dmChannels[idx]
+            updated.lastMessageId = msg.id
+            if (updated.recipients?.isEmpty ?? true) && !isFromBot {
+                updated.recipients = [msg.author]
+            }
+            dmChannels.remove(at: idx)
+            dmChannels.insert(updated, at: 0)
+            let botId = botUser?.id ?? activeBotAccountId
+            if !botId.isEmpty {
+                BotVaultStore.shared.saveDMChannels(dmChannels, for: botId)
+            }
+        } else {
+            // Insert immediately so DM shows up right away, then hydrate full metadata via REST
+            let synthetic = DiscordChannel(
+                id: msg.channelId,
+                type: 1,
+                guildId: nil,
+                name: nil,
+                topic: nil,
+                position: nil,
+                parentId: nil,
+                lastMessageId: msg.id,
+                nsfw: nil,
+                recipients: isFromBot ? nil : [msg.author]
+            )
+            upsertDMChannel(synthetic, moveToTop: true)
+            Task { await ensureDMChannelExists(channelId: msg.channelId) }
+        }
+    }
+
+    private func ensureDMChannelExists(channelId: String) async {
+        guard !activeToken.isEmpty else { return }
+        if let fetched = try? await rest.fetchChannel(channelId: channelId, token: activeToken),
+           fetched.type == 1 || fetched.type == 3 {
+            upsertDMChannel(fetched, moveToTop: true)
+        }
+    }
+
+    private func hydrateRecentDMsInBackground() async {
+        let botId = botUser?.id ?? activeBotAccountId
+        guard !activeToken.isEmpty, !dmChannels.isEmpty else { return }
+        let lastReads = BotVaultStore.shared.lastReadMessageIdByChannel(for: botId)
+        let targets = Array(dmChannels.prefix(10))
+        for ch in targets {
+            if let list = try? await rest.fetchMessages(channelId: ch.id, limit: 25, token: activeToken) {
+                if messagesByChannel[ch.id] == nil {
+                    messagesByChannel[ch.id] = list
+                }
+                if let latest = list.last {
+                    lastMessageByChannel[ch.id] = latest
+                    if let readId = lastReads[ch.id] {
+                        if let readIdx = list.lastIndex(where: { $0.id == readId }) {
+                            let unreadSlice = list[(readIdx + 1)...].filter { $0.author.id != botId }
+                            if !unreadSlice.isEmpty && activeViewingChannelId != ch.id {
+                                unreadCountByChannel[ch.id] = unreadSlice.count
+                            }
+                        } else if latest.author.id != botId && latest.id != readId && activeViewingChannelId != ch.id {
+                            unreadCountByChannel[ch.id] = max(unreadCountByChannel[ch.id] ?? 0, 1)
+                        }
+                    } else if latest.author.id != botId && activeViewingChannelId != ch.id {
+                        unreadCountByChannel[ch.id] = max(unreadCountByChannel[ch.id] ?? 0, 1)
+                    }
+                }
+            }
+        }
+    }
+
+    private func handleNotificationForNewMessage(_ msg: DiscordMessage) {
+        guard msg.author.id != botUser?.id else { return }
+
+        if activeViewingChannelId == msg.channelId {
+            markChannelRead(msg.channelId, lastMessageId: msg.id)
+            return
+        }
+
+        unreadCountByChannel[msg.channelId, default: 0] += 1
+
+        let isDirectMessage = (msg.guildId == nil)
+        let isReplyToBot = (msg.referencedMessage?.author?.id == botUser?.id)
+        let isBotMentioned: Bool = {
+            guard let bid = botUser?.id else { return false }
+            if msg.mentions?.contains(where: { $0.id == bid }) == true { return true }
+            return msg.content.contains("<@\(bid)>") || msg.content.contains("<@!\(bid)>")
+        }()
+
+        guard isDirectMessage || isReplyToBot || isBotMentioned else { return }
+
+        mentionCountByChannel[msg.channelId, default: 0] += 1
+
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+
+        let guildObj = msg.guildId.flatMap { gid in guilds.first(where: { $0.id == gid }) }
+        let channelObj: DiscordChannel = {
+            if let g = guildObj, let found = g.channels.first(where: { $0.id == msg.channelId }) {
+                return found
+            }
+            if let dm = dmChannels.first(where: { $0.id == msg.channelId }) {
+                return dm
+            }
+            return DiscordChannel(
+                id: msg.channelId,
+                type: isDirectMessage ? 1 : 0,
+                guildId: msg.guildId,
+                name: isDirectMessage ? msg.author.displayName : "channel",
+                recipients: isDirectMessage ? [msg.author] : nil
+            )
+        }()
+
+        let title = isDirectMessage
+            ? "\(msg.author.displayName) (Tin nhắn riêng)"
+            : "\(msg.author.displayName) • #\(channelObj.displayName)"
+
+        let cleanPreview = DiscordTextFormatter.renderCleanText(
+            msg.content,
+            guild: guildObj,
+            mentions: msg.mentions,
+            members: msg.guildId.flatMap { membersByGuild[$0] } ?? []
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let subtitle = !cleanPreview.isEmpty
+            ? cleanPreview
+            : (!msg.attachments.isEmpty ? "[Đính kèm \(msg.attachments.first?.filename ?? "tệp")]" : (!msg.embeds.isEmpty ? "[Embed]" : "[Tin nhắn mới]"))
+
+        let banner = InAppNotificationBanner(
+            channel: channelObj,
+            guild: guildObj,
+            title: title,
+            subtitle: subtitle,
+            avatarURL: msg.author.avatarURL(size: 96),
+            timestamp: Date()
+        )
+        activeToastBanner = banner
+        toastDismissTask?.cancel()
+        toastDismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            if self?.activeToastBanner?.id == banner.id {
+                self?.activeToastBanner = nil
+            }
+        }
+
+        // Local iOS Notification
+        let notif = UNMutableNotificationContent()
+        notif.title = title
+        notif.body = subtitle
+        notif.sound = .default
+        var userInfo: [String: Any] = ["channel_id": msg.channelId]
+        if let gid = msg.guildId { userInfo["guild_id"] = gid }
+        notif.userInfo = userInfo
+        let req = UNNotificationRequest(identifier: "dbc-\(msg.id)", content: notif, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
+    }
+
     private func loadApplicationEmojis() async {
         guard let appId = application?.id ?? botUser?.id, !activeToken.isEmpty else { return }
         if let items = try? await rest.fetchApplicationEmojis(applicationId: appId, token: activeToken) {
@@ -727,7 +1052,6 @@ final class DiscordGatewayService: ObservableObject {
             m.user = m.user ?? msg.author
             upsertMember(guildId: gid, member: m)
         } else {
-            // Ensure author still shows in members list even without GUILD_MEMBERS intent
             let existing = membersByGuild[gid]?.first(where: { $0.user?.id == msg.author.id })
             if existing == nil {
                 upsertMember(guildId: gid, member: DiscordMember(user: msg.author, nick: nil, roles: [], avatar: nil, joinedAt: nil))
@@ -798,6 +1122,12 @@ final class DiscordGatewayService: ObservableObject {
         do {
             let list = try await rest.fetchMessages(channelId: channelId, limit: 50, token: activeToken)
             messagesByChannel[channelId] = list
+            if let latest = list.last {
+                lastMessageByChannel[channelId] = latest
+                if activeViewingChannelId == channelId {
+                    markChannelRead(channelId, lastMessageId: latest.id)
+                }
+            }
             hasMoreOlderByChannel[channelId] = list.count >= 50
             for m in list { harvestMember(from: m) }
         } catch {
@@ -849,6 +1179,8 @@ final class DiscordGatewayService: ObservableObject {
             arr.append(sent)
             messagesByChannel[channelId] = arr
         }
+        lastMessageByChannel[channelId] = sent
+        markChannelRead(channelId, lastMessageId: sent.id)
         harvestMember(from: sent)
     }
 
@@ -917,9 +1249,7 @@ final class DiscordGatewayService: ObservableObject {
 
     func openDM(recipientId: String) async throws -> DiscordChannel {
         let channel = try await rest.createDM(recipientId: recipientId, token: activeToken)
-        if !dmChannels.contains(where: { $0.id == channel.id }) {
-            dmChannels.insert(channel, at: 0)
-        }
+        upsertDMChannel(channel, moveToTop: true)
         return channel
     }
 

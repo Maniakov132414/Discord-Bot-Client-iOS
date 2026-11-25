@@ -317,6 +317,11 @@ final class DiscordRESTClient {
         return try await execute(req, as: DiscordChannel.self)
     }
 
+    func fetchChannel(channelId: String, token: String) async throws -> DiscordChannel {
+        let req = try makeRequest(path: "/channels/\(channelId)", token: token)
+        return try await execute(req, as: DiscordChannel.self)
+    }
+
     func sendTyping(channelId: String, token: String) async {
         guard let req = try? makeRequest(path: "/channels/\(channelId)/typing", method: "POST", token: token) else { return }
         _ = try? await executeRaw(req)

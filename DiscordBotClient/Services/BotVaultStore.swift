@@ -251,6 +251,42 @@ final class BotVaultStore: ObservableObject {
         "https://discord.com/oauth2/authorize?client_id=\(botId)&permissions=274878221312&scope=bot%20applications.commands"
     }
 
+    // MARK: - Persistent DM History & Read State
+
+    func savedDMChannels(for botId: String) -> [DiscordChannel] {
+        guard !botId.isEmpty else { return [] }
+        if let url = fallbackVaultFileURL(filename: "dbc_dms_\(botId).json"),
+           let data = try? Data(contentsOf: url),
+           let decoded = try? JSONDecoder().decode([DiscordChannel].self, from: data) {
+            return decoded
+        }
+        if let data = UserDefaults.standard.data(forKey: "dbc.v2.dms.\(botId)"),
+           let decoded = try? JSONDecoder().decode([DiscordChannel].self, from: data) {
+            return decoded
+        }
+        return []
+    }
+
+    func saveDMChannels(_ channels: [DiscordChannel], for botId: String) {
+        guard !botId.isEmpty, let data = try? JSONEncoder().encode(channels) else { return }
+        if let url = fallbackVaultFileURL(filename: "dbc_dms_\(botId).json") {
+            try? data.write(to: url, options: .atomic)
+        }
+        UserDefaults.standard.set(data, forKey: "dbc.v2.dms.\(botId)")
+    }
+
+    func lastReadMessageIdByChannel(for botId: String) -> [String: String] {
+        guard !botId.isEmpty else { return [:] }
+        return (UserDefaults.standard.dictionary(forKey: "dbc.v2.lastRead.\(botId)") as? [String: String]) ?? [:]
+    }
+
+    func setLastReadMessageId(_ messageId: String, channelId: String, for botId: String) {
+        guard !botId.isEmpty, !channelId.isEmpty, !messageId.isEmpty else { return }
+        var map = lastReadMessageIdByChannel(for: botId)
+        map[channelId] = messageId
+        UserDefaults.standard.set(map, forKey: "dbc.v2.lastRead.\(botId)")
+    }
+
     // MARK: - Persistence (Keychain + Application Support Fallback)
 
     private func fallbackVaultFileURL(filename: String = "dbc_vault_v2.json") -> URL? {

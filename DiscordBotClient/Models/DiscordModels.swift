@@ -192,6 +192,46 @@ struct DiscordChannel: Codable, Identifiable, Equatable {
     }
 }
 
+struct DiscordStickerItem: Codable, Identifiable, Equatable {
+    let id: String
+    var name: String
+    var formatType: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case formatType = "format_type"
+    }
+
+    var imageURL: URL? {
+        let ext = (formatType == 4) ? "gif" : "png"
+        return URL(string: "https://media.discordapp.net/stickers/\(id).\(ext)?size=160")
+    }
+}
+
+struct DiscordSticker: Codable, Identifiable, Equatable {
+    let id: String
+    var name: String
+    var description: String?
+    var formatType: Int?
+    var available: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, available
+        case formatType = "format_type"
+    }
+
+    var imageURL: URL? {
+        let ext = (formatType == 4) ? "gif" : "png"
+        return URL(string: "https://media.discordapp.net/stickers/\(id).\(ext)?size=160")
+    }
+
+    var markdownLink: String {
+        let safe = name.isEmpty ? "sticker" : name
+        let ext = (formatType == 4) ? "gif" : "png"
+        return "[\(safe)](https://media.discordapp.net/stickers/\(id).\(ext)?size=160)"
+    }
+}
+
 struct DiscordGuild: Codable, Identifiable, Equatable {
     let id: String
     var name: String
@@ -201,9 +241,10 @@ struct DiscordGuild: Codable, Identifiable, Equatable {
     var channels: [DiscordChannel] = []
     var roles: [DiscordRole] = []
     var emojis: [DiscordEmoji] = []
+    var stickers: [DiscordSticker]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, icon, channels, roles, emojis
+        case id, name, icon, channels, roles, emojis, stickers
         case ownerId = "owner_id"
         case memberCount = "member_count"
     }
@@ -725,6 +766,7 @@ struct DiscordMessage: Codable, Identifiable, Equatable {
     var attachments: [DiscordAttachment] = []
     var embeds: [DiscordEmbed] = []
     var components: [DiscordComponent]?
+    var stickerItems: [DiscordStickerItem]?
     var reactions: [DiscordReaction]?
     var referencedMessage: DiscordReferencedMessage?
     var type: Int?
@@ -736,6 +778,7 @@ struct DiscordMessage: Codable, Identifiable, Equatable {
         case editedTimestamp = "edited_timestamp"
         case mentionEveryone = "mention_everyone"
         case mentionRoles = "mention_roles"
+        case stickerItems = "sticker_items"
         case referencedMessage = "referenced_message"
     }
 
@@ -761,6 +804,7 @@ struct DiscordMessage: Codable, Identifiable, Equatable {
         } else {
             components = nil
         }
+        stickerItems = try? c.decodeIfPresent([DiscordStickerItem].self, forKey: .stickerItems)
         reactions = try c.decodeIfPresent([DiscordReaction].self, forKey: .reactions)
         referencedMessage = try c.decodeIfPresent(DiscordReferencedMessage.self, forKey: .referencedMessage)
         type = try c.decodeIfPresent(Int.self, forKey: .type)
@@ -1024,4 +1068,107 @@ enum DiscordTextFormatter {
         }
         return out
     }
+}
+
+struct UnicodeEmojiEntry: Identifiable, Hashable {
+    let emoji: String
+    let keywords: String
+    var id: String { emoji }
+}
+
+struct UnicodeEmojiCategory: Identifiable {
+    let title: String
+    let items: [UnicodeEmojiEntry]
+    var id: String { title }
+}
+
+enum UnicodeEmojiCatalog {
+    private static func make(_ points: UInt32...) -> String {
+        String(String.UnicodeScalarView(points.compactMap { UnicodeScalar($0) }))
+    }
+
+    private static func entry(_ keywords: String, _ points: UInt32...) -> UnicodeEmojiEntry {
+        UnicodeEmojiEntry(
+            emoji: String(String.UnicodeScalarView(points.compactMap { UnicodeScalar($0) })),
+            keywords: keywords
+        )
+    }
+
+    static let quickReacts: [UnicodeEmojiEntry] = [
+        entry("like thumbsup ok", 0x1F44D),
+        entry("heart love red", 0x2764, 0xFE0F),
+        entry("laugh joy lol haha", 0x1F602),
+        entry("wow surprised open mouth", 0x1F62E),
+        entry("sad cry tear", 0x1F622),
+        entry("fire lit hot", 0x1F525),
+        entry("party tada celebrate", 0x1F389),
+        entry("check yes done", 0x2705)
+    ]
+
+    static let categories: [UnicodeEmojiCategory] = [
+        UnicodeEmojiCategory(title: "Cười & Cảm xúc", items: [
+            entry("grin smile happy", 0x1F600), entry("grinning big", 0x1F603), entry("smile eyes", 0x1F604),
+            entry("beaming", 0x1F601), entry("laughing xd", 0x1F606), entry("sweat smile", 0x1F605),
+            entry("rofl", 0x1F923), entry("joy lol", 0x1F602), entry("slightly happy", 0x1F642),
+            entry("upside down", 0x1F643), entry("melting", 0x1FAE0), entry("wink", 0x1F609),
+            entry("blush warm", 0x1F60A), entry("innocent angel", 0x1F607), entry("love heart eyes", 0x1F60D),
+            entry("star struck", 0x1F929), entry("kiss heart", 0x1F618), entry("kissing", 0x1F617),
+            entry("smiling hearts", 0x1F970), entry("yum tasty", 0x1F60B), entry("tongue", 0x1F61B),
+            entry("wink tongue", 0x1F61C), entry("zany crazy", 0x1F92A), entry("money rich", 0x1F911),
+            entry("hugging", 0x1F917), entry("hand mouth giggle", 0x1F92D), entry("shush quiet", 0x1F92B),
+            entry("thinking hmm", 0x1F914), entry("salute", 0x1FAE1), entry("zipper", 0x1F910),
+            entry("raised eyebrow", 0x1F928), entry("neutral", 0x1F610), entry("expressionless", 0x1F611),
+            entry("smirk", 0x1F60F), entry("unamused", 0x1F612), entry("rolling eyes", 0x1F644),
+            entry("grimace", 0x1F62C), entry("relieved", 0x1F60C), entry("pensive sad", 0x1F614),
+            entry("sleepy", 0x1F62A), entry("sleeping zzz", 0x1F634), entry("sunglasses cool", 0x1F60E),
+            entry("nerd glasses", 0x1F913), entry("monocle", 0x1F9D0), entry("confused", 0x1F615),
+            entry("worried", 0x1F61F), entry("open mouth wow", 0x1F62E), entry("astonished shocked", 0x1F632),
+            entry("flushed", 0x1F633), entry("pleading puppy", 0x1F97A), entry("holding back tears", 0x1F979),
+            entry("cry tear", 0x1F622), entry("sob crying", 0x1F62D), entry("scream", 0x1F631),
+            entry("angry mad", 0x1F620), entry("rage furious", 0x1F621), entry("skull dead lol", 0x1F480),
+            entry("clown", 0x1F921), entry("ghost boo", 0x1F47B), entry("robot bot", 0x1F916)
+        ]),
+        UnicodeEmojiCategory(title: "Tay & Cử chỉ", items: [
+            entry("wave hi hello", 0x1F44B), entry("raised hand", 0x270B), entry("ok hand", 0x1F44C),
+            entry("pinched", 0x1F90C), entry("victory peace", 0x270C, 0xFE0F), entry("crossed fingers", 0x1F91E),
+            entry("love you", 0x1F91F), entry("rock metal", 0x1F918), entry("call me", 0x1F919),
+            entry("point left", 0x1F448), entry("point right", 0x1F449), entry("point up", 0x1F446),
+            entry("point down", 0x1F447), entry("thumbs up like", 0x1F44D), entry("thumbs down dislike", 0x1F44E),
+            entry("fist punch", 0x1F44A), entry("clap", 0x1F44F), entry("raised hands", 0x1F64C),
+            entry("heart hands", 0x1FAF6), entry("handshake", 0x1F91D), entry("pray thanks please", 0x1F64F),
+            entry("muscle flex strong", 0x1F4AA), entry("eyes look", 0x1F440), entry("brain smart", 0x1F9E0)
+        ]),
+        UnicodeEmojiCategory(title: "Tim & Biểu tượng", items: [
+            entry("red heart love", 0x2764, 0xFE0F), entry("pink heart", 0x1FA77), entry("orange heart", 0x1F9E1),
+            entry("yellow heart", 0x1F49B), entry("green heart", 0x1F49A), entry("blue heart", 0x1F499),
+            entry("purple heart", 0x1F49C), entry("black heart", 0x1F5A4), entry("white heart", 0x1F90D),
+            entry("broken heart", 0x1F494), entry("sparkling heart", 0x1F496), entry("two hearts", 0x1F495),
+            entry("fire hot lit", 0x1F525), entry("sparkles magic", 0x2728), entry("star", 0x2B50),
+            entry("glowing star", 0x1F31F), entry("zap lightning", 0x26A1), entry("boom", 0x1F4A5),
+            entry("100 hundred", 0x1F4AF), entry("check done", 0x2705), entry("cross no wrong", 0x274C),
+            entry("warning alert", 0x26A0, 0xFE0F), entry("question", 0x2753), entry("exclamation", 0x2757),
+            entry("bell notify", 0x1F514), entry("lock secure", 0x1F512), entry("key", 0x1F511),
+            entry("gear settings", 0x2699, 0xFE0F), entry("link", 0x1F517), entry("pin", 0x1F4CC)
+        ]),
+        UnicodeEmojiCategory(title: "Động vật & Tự nhiên", items: [
+            entry("dog puppy", 0x1F436), entry("cat kitty", 0x1F431), entry("fox", 0x1F98A),
+            entry("bear", 0x1F43B), entry("panda", 0x1F43C), entry("koala", 0x1F428),
+            entry("tiger", 0x1F42F), entry("lion", 0x1F981), entry("frog", 0x1F438),
+            entry("monkey", 0x1F435), entry("chicken", 0x1F414), entry("penguin", 0x1F427),
+            entry("owl", 0x1F989), entry("butterfly", 0x1F98B), entry("unicorn", 0x1F984),
+            entry("dragon", 0x1F409), entry("whale", 0x1F433), entry("dolphin", 0x1F42C),
+            entry("cherry blossom flower", 0x1F338), entry("rose", 0x1F339), entry("sunflower", 0x1F33B),
+            entry("four leaf clover luck", 0x1F340), entry("sun", 0x2600, 0xFE0F), entry("moon", 0x1F319),
+            entry("rainbow", 0x1F308), entry("snowflake", 0x2744, 0xFE0F)
+        ]),
+        UnicodeEmojiCategory(title: "Lễ hội & Hoạt động", items: [
+            entry("party tada", 0x1F389), entry("confetti", 0x1F38A), entry("balloon", 0x1F388),
+            entry("gift present", 0x1F381), entry("trophy win", 0x1F3C6), entry("medal gold", 0x1F947),
+            entry("crown king", 0x1F451), entry("gem diamond", 0x1F48E), entry("game controller", 0x1F3AE),
+            entry("dice", 0x1F3B2), entry("music note", 0x1F3B5), entry("headphones", 0x1F3A7),
+            entry("camera", 0x1F4F7), entry("movie clapper", 0x1F3AC), entry("coffee", 0x2615),
+            entry("pizza", 0x1F355), entry("burger", 0x1F354), entry("cake birthday", 0x1F382),
+            entry("rocket launch", 0x1F680), entry("money bag", 0x1F4B0)
+        ])
+    ]
 }
