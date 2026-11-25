@@ -11,6 +11,7 @@ struct ChannelChatView: View {
     @State private var composerText: String = ""
     @State private var pendingAttachments: [MediaUploadItem] = []
     @State private var pendingEmbeds: [DiscordEmbed] = []
+    @State private var pendingComponents: [DiscordComponent] = []
     @State private var replyTarget: DiscordMessage?
     @State private var editingTarget: DiscordMessage?
     @State private var isSending = false
@@ -18,14 +19,18 @@ struct ChannelChatView: View {
 
     @State private var showPhotoPicker = false
     @State private var showDocumentPicker = false
-    @State private var showEmbedComposer = false
+    @State private var showEmojiPicker = false
+    @State private var showMessageStudio = false
     @State private var editingEmbedTarget: DiscordMessage?
     @State private var reactionTarget: DiscordMessage?
     @State private var showMembersSheet = false
+    @State private var inspectedMember: DiscordMember?
     @State private var showPinsSheet = false
     @State private var showPurgeSheet = false
     @State private var previewImageItem: IdentifiableURL?
     @State private var previewVideoItem: IdentifiableURL?
+    @State private var pushedDMChannel: DiscordChannel?
+    @State private var pushDM = false
 
     private var messages: [DiscordMessage] {
         gateway.messagesByChannel[channel.id] ?? []
@@ -45,14 +50,26 @@ struct ChannelChatView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            timelineView
-            typingBar
-            autocompleteBar
-            composerContainer
+        ZStack {
+            if let dm = pushedDMChannel {
+                NavigationLink(
+                    destination: ChannelChatView(channel: dm, guild: nil),
+                    isActive: $pushDM
+                ) {
+                    EmptyView()
+                }
+                .hidden()
+            }
+
+            VStack(spacing: 0) {
+                timelineView
+                typingBar
+                autocompleteBar
+                composerContainer
+            }
         }
         .background(vault.backgroundColor.ignoresSafeArea())
-        .navigationTitle("#\(channel.displayName)")
+        .navigationTitle(channel.type == 1 || channel.type == 3 ? channel.displayName : "#\(channel.displayName)")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
@@ -90,26 +107,63 @@ struct ChannelChatView: View {
                 pendingAttachments.append(contentsOf: items)
             }
         }
-        .sheet(isPresented: $showEmbedComposer) {
-            EmbedComposerSheet(initialEmbed: nil) { newEmbed in
-                pendingEmbeds.append(newEmbed)
+        .sheet(isPresented: $showEmojiPicker) {
+            EmojiPickerSheet(currentGuild: guild) { snippet in
+                composerText += snippet
             }
+            .environmentObject(vault)
+            .environmentObject(gateway)
         }
-        .sheet(item: $editingEmbedTarget) { msg in
-            EmbedComposerSheet(initialEmbed: msg.embeds.first) { updatedEmbed in
-                Task {
-                    try? await gateway.editMessage(
+        .sheet(isPresented: $showMessageStudio) {
+            MessageStudioSheet(
+                initialEmbed: nil,
+                onAttachV1: { emb, comps in
+                    if let emb = emb { pendingEmbeds.append(emb) }
+                    if !comps.isEmpty { pendingComponents.append(contentsOf: comps) }
+                },
+                onSendV2: { comps, flags in
+                    try await gateway.sendMessage(
                         channelId: channel.id,
-                        messageId: msg.id,
-                        content: msg.content,
-                        embeds: [updatedEmbed]
+                        content: "",
+                        embeds: [],
+                        components: comps,
+                        flags: flags
                     )
                 }
-            }
+            )
+            .environmentObject(vault)
+            .environmentObject(gateway)
+        }
+        .sheet(item: $editingEmbedTarget) { msg in
+            MessageStudioSheet(
+                initialEmbed: msg.embeds.first,
+                onAttachV1: { updatedEmbed, comps in
+                    Task {
+                        try? await gateway.editMessage(
+                            channelId: channel.id,
+                            messageId: msg.id,
+                            content: msg.content,
+                            embeds: updatedEmbed.map { [$0] } ?? msg.embeds,
+                            components: comps.isEmpty ? msg.components : comps
+                        )
+                    }
+                },
+                onSendV2: { comps, flags in
+                    try await gateway.editMessage(
+                        channelId: channel.id,
+                        messageId: msg.id,
+                        content: nil,
+                        embeds: nil,
+                        components: comps,
+                        flags: flags
+                    )
+                }
+            )
+            .environmentObject(vault)
         }
         .sheet(item: $reactionTarget) { msg in
             ReactionPickerSheet(
-                guildEmojis: guild?.emojis ?? [],
+                currentGuild: guild,
                 existingReactions: msg.reactions ?? []
             ) { emojiIdentifier, alreadyMine in
                 Task {
@@ -121,25 +175,46 @@ struct ChannelChatView: View {
                     )
                 }
             }
+            .environmentObject(vault)
+            .environmentObject(gateway)
         }
         .sheet(isPresented: $showMembersSheet) {
             if let gid = guild?.id ?? channel.guildId {
                 MembersDrawerSheet(
                     guildId: gid,
+                    guild: guild,
                     roles: guild?.roles ?? [],
                     onMention: { member in
                         if let uid = member.user?.id {
                             composerText += " <@\(uid)> "
                         }
                     },
-                    onOpenDM: { member in
-                        guard let uid = member.user?.id else { return }
-                        Task {
-                            _ = try? await gateway.openDM(recipientId: uid)
-                        }
+                    onOpenDMChannel: { dm in
+                        pushedDMChannel = dm
+                        pushDM = true
                     }
                 )
+                .environmentObject(vault)
+                .environmentObject(gateway)
             }
+        }
+        .sheet(item: $inspectedMember) { member in
+            MemberProfileSheet(
+                member: member,
+                guildId: guild?.id ?? channel.guildId,
+                roles: guild?.roles ?? [],
+                onMention: { m in
+                    if let uid = m.user?.id {
+                        composerText += " <@\(uid)> "
+                    }
+                },
+                onOpenDMChannel: { dm in
+                    pushedDMChannel = dm
+                    pushDM = true
+                }
+            )
+            .environmentObject(vault)
+            .environmentObject(gateway)
         }
         .sheet(isPresented: $showPinsSheet) {
             PinnedMessagesSheet(channelId: channel.id, guild: guild, members: members)
@@ -217,11 +292,22 @@ struct ChannelChatView: View {
         return d2.timeIntervalSince(d1) < 300
     }
 
+    private func resolvedMember(for msg: DiscordMessage) -> DiscordMember {
+        if let found = members.first(where: { $0.user?.id == msg.author.id }) {
+            return found
+        }
+        if var m = msg.member {
+            m.user = m.user ?? msg.author
+            return m
+        }
+        return DiscordMember(user: msg.author, nick: nil, roles: [], avatar: nil, joinedAt: nil)
+    }
+
     private func messageRow(_ msg: DiscordMessage, grouped: Bool) -> some View {
-        let memberObj = msg.member ?? members.first(where: { $0.user?.id == msg.author.id })
-        let displayName = memberObj?.displayName(fallback: msg.author.displayName) ?? msg.author.displayName
-        let roleColor = memberObj?.highestRoleColor(in: guild?.roles ?? []) ?? vault.primaryTextColor
-        let avatarURL = memberObj?.avatarURL(guildId: guild?.id ?? msg.guildId, size: 128) ?? msg.author.avatarURL(size: 128)
+        let memberObj = resolvedMember(for: msg)
+        let displayName = memberObj.displayName(fallback: msg.author.displayName)
+        let roleColor = memberObj.highestRoleColor(in: guild?.roles ?? []) ?? vault.primaryTextColor
+        let avatarURL = memberObj.avatarURL(guildId: guild?.id ?? msg.guildId, size: 128) ?? msg.author.avatarURL(size: 128)
 
         return VStack(alignment: .leading, spacing: 4) {
             if let ref = msg.referencedMessage {
@@ -246,25 +332,35 @@ struct ChannelChatView: View {
                     Spacer()
                         .frame(width: 38)
                 } else {
-                    AsyncImage(url: avatarURL) { phase in
-                        switch phase {
-                        case .success(let img):
-                            img.resizable().scaledToFill()
-                        default:
-                            Circle().fill(vault.surfaceColor)
+                    Button {
+                        inspectedMember = memberObj
+                    } label: {
+                        AsyncImage(url: avatarURL) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable().scaledToFill()
+                            default:
+                                Circle().fill(vault.surfaceColor)
+                            }
                         }
+                        .frame(width: 38, height: 38)
+                        .clipShape(Circle())
                     }
-                    .frame(width: 38, height: 38)
-                    .clipShape(Circle())
+                    .buttonStyle(.plain)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     if !grouped {
                         HStack(spacing: 6) {
-                            Text(displayName)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(roleColor)
-                                .lineLimit(1)
+                            Button {
+                                inspectedMember = memberObj
+                            } label: {
+                                Text(displayName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundColor(roleColor)
+                                    .lineLimit(1)
+                            }
+                            .buttonStyle(.plain)
 
                             if msg.author.bot == true {
                                 Text("APP")
@@ -289,16 +385,13 @@ struct ChannelChatView: View {
                     }
 
                     if !msg.content.isEmpty {
-                        let rendered = DiscordTextFormatter.renderCleanText(
-                            msg.content,
+                        RichMessageContentView(
+                            rawContent: msg.content,
+                            isEdited: msg.editedTimestamp != nil,
                             guild: guild,
                             mentions: msg.mentions,
                             members: members
                         )
-                        Text(rendered + (msg.editedTimestamp != nil ? " (đã sửa)" : ""))
-                            .font(.subheadline)
-                            .foregroundColor(vault.primaryTextColor)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     ForEach(msg.attachments) { att in
@@ -308,6 +401,12 @@ struct ChannelChatView: View {
                     ForEach(msg.embeds) { embed in
                         EmbedCardView(embed: embed) { url in
                             previewImageItem = IdentifiableURL(url: url, title: embed.title ?? "Ảnh")
+                        }
+                    }
+
+                    if let comps = msg.components, !comps.isEmpty {
+                        MessageComponentsRendererView(components: comps) { url, title in
+                            previewImageItem = IdentifiableURL(url: url, title: title)
                         }
                     }
 
@@ -345,7 +444,7 @@ struct ChannelChatView: View {
                 Button {
                     editingEmbedTarget = msg
                 } label: {
-                    Label("Sửa / Gắn Embed", systemImage: "rectangle.text.badge.plus")
+                    Label("Sửa / Gắn Embed & Nút", systemImage: "rectangle.text.badge.plus")
                 }
             }
 
@@ -355,6 +454,12 @@ struct ChannelChatView: View {
                 }
             } label: {
                 Label((msg.pinned ?? false) ? "Bỏ ghim" : "Ghim tin nhắn", systemImage: (msg.pinned ?? false) ? "pin.slash" : "pin")
+            }
+
+            Button {
+                inspectedMember = memberObj
+            } label: {
+                Label("Xem hồ sơ thành viên", systemImage: "person.crop.circle")
             }
 
             Button {
@@ -483,15 +588,7 @@ struct ChannelChatView: View {
                     } label: {
                         HStack(spacing: 4) {
                             if let imgURL = rxn.emoji.imageURL {
-                                AsyncImage(url: imgURL) { phase in
-                                    if case .success(let img) = phase {
-                                        img.resizable().scaledToFit()
-                                    } else {
-                                        Image(systemName: "sparkle")
-                                            .font(.caption2)
-                                    }
-                                }
-                                .frame(width: 15, height: 15)
+                                AnimatedEmojiImageView(url: imgURL, size: 16)
                             } else {
                                 Text(rxn.emoji.name ?? "?")
                                     .font(.caption)
@@ -591,22 +688,17 @@ struct ChannelChatView: View {
                         }
 
                     case .emoji:
-                        let emojis = (guild?.emojis ?? []).filter {
+                        let allEmojis = (guild?.emojis ?? []) + gateway.applicationEmojis
+                        let emojis = allEmojis.filter {
                             trigger.query.isEmpty || $0.name.lowercased().contains(trigger.query)
                         }.prefix(12)
                         ForEach(Array(emojis)) { em in
                             Button {
-                                applyAutocomplete(replacement: "\(em.markdownString) ")
+                                let text = vault.emojiInsertAsHyperlink ? em.hyperlinkMarkdown : em.markdownString
+                                applyAutocomplete(replacement: "\(text) ")
                             } label: {
                                 HStack(spacing: 4) {
-                                    if let url = em.imageURL {
-                                        AsyncImage(url: url) { ph in
-                                            if case .success(let img) = ph {
-                                                img.resizable().scaledToFit()
-                                            }
-                                        }
-                                        .frame(width: 16, height: 16)
-                                    }
+                                    AnimatedEmojiImageView(url: em.imageURL, size: 16)
                                     Text(":\(em.name):")
                                         .font(.caption)
                                 }
@@ -712,7 +804,7 @@ struct ChannelChatView: View {
                 .padding(.horizontal, 12)
             }
 
-            if !pendingAttachments.isEmpty || !pendingEmbeds.isEmpty {
+            if !pendingAttachments.isEmpty || !pendingEmbeds.isEmpty || !pendingComponents.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(Array(pendingAttachments.enumerated()), id: \.element.id) { idx, item in
@@ -753,6 +845,24 @@ struct ChannelChatView: View {
                             .background(vault.accentColor.opacity(0.22))
                             .clipShape(Capsule())
                         }
+                        if !pendingComponents.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "rectangle.grid.2x2")
+                                    .font(.caption2)
+                                Text("\(pendingComponents.count) hàng nút")
+                                    .font(.caption2)
+                                Button {
+                                    pendingComponents.removeAll()
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.caption2)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(vault.accentColor.opacity(0.22))
+                            .clipShape(Capsule())
+                        }
                     }
                     .padding(.horizontal, 12)
                 }
@@ -773,15 +883,24 @@ struct ChannelChatView: View {
                         Label("Chọn Tệp đính kèm", systemImage: "doc")
                     }
                     Button {
-                        showEmbedComposer = true
+                        showMessageStudio = true
                     } label: {
-                        Label("Tạo Embed", systemImage: "rectangle.text.badge.plus")
+                        Label("Message Studio (Embed / Components V2)", systemImage: "rectangle.text.badge.plus")
                     }
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 28))
                         .foregroundColor(vault.secondaryTextColor)
                 }
+
+                Button {
+                    showEmojiPicker = true
+                } label: {
+                    Image(systemName: "face.smiling")
+                        .font(.system(size: 24))
+                        .foregroundColor(vault.secondaryTextColor)
+                }
+                .buttonStyle(.plain)
 
                 Group {
                     if #available(iOS 16.0, *) {
@@ -800,7 +919,8 @@ struct ChannelChatView: View {
                 let canSend = !isSending && (
                     !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                     !pendingAttachments.isEmpty ||
-                    !pendingEmbeds.isEmpty
+                    !pendingEmbeds.isEmpty ||
+                    !pendingComponents.isEmpty
                 )
 
                 Button {
@@ -827,7 +947,7 @@ struct ChannelChatView: View {
 
     private func sendAction() async {
         let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !pendingAttachments.isEmpty || !pendingEmbeds.isEmpty else { return }
+        guard !text.isEmpty || !pendingAttachments.isEmpty || !pendingEmbeds.isEmpty || !pendingComponents.isEmpty else { return }
         isSending = true
         sendError = nil
         defer { isSending = false }
@@ -838,7 +958,8 @@ struct ChannelChatView: View {
                     channelId: channel.id,
                     messageId: editMsg.id,
                     content: text,
-                    embeds: editMsg.embeds
+                    embeds: editMsg.embeds,
+                    components: editMsg.components
                 )
                 editingTarget = nil
             } else {
@@ -846,12 +967,14 @@ struct ChannelChatView: View {
                     channelId: channel.id,
                     content: text,
                     embeds: pendingEmbeds,
+                    components: pendingComponents,
                     replyToMessageId: replyTarget?.id,
                     attachments: pendingAttachments
                 )
                 replyTarget = nil
                 pendingAttachments = []
                 pendingEmbeds = []
+                pendingComponents = []
             }
             composerText = ""
         } catch {
@@ -891,10 +1014,13 @@ private struct EmbedCardView: View {
                                 .foregroundColor(embed.url != nil ? vault.accentColor : vault.primaryTextColor)
                         }
                         if let desc = embed.description, !desc.isEmpty {
-                            Text(desc)
-                                .font(.caption)
-                                .foregroundColor(vault.primaryTextColor.opacity(0.92))
-                                .fixedSize(horizontal: false, vertical: true)
+                            RichMessageContentView(
+                                rawContent: desc,
+                                isEdited: false,
+                                guild: nil,
+                                mentions: nil,
+                                members: []
+                            )
                         }
                     }
                     Spacer(minLength: 0)
@@ -953,98 +1079,19 @@ private struct EmbedCardView: View {
     }
 }
 
-private struct EmbedComposerSheet: View {
-    let initialEmbed: DiscordEmbed?
-    let onSave: (DiscordEmbed) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var title = ""
-    @State private var description = ""
-    @State private var footer = ""
-    @State private var imageURL = ""
-    @State private var hexColor = "#5865F2"
-
-    var body: some View {
-        NavigationView {
-            Form {
-                Section("Nội dung Embed") {
-                    TextField("Tiêu đề", text: $title)
-                    TextField("Mô tả", text: $description)
-                    TextField("Chân trang (Footer)", text: $footer)
-                    TextField("URL ảnh (tuỳ chọn)", text: $imageURL)
-                        .keyboardType(.URL)
-                        .autocapitalization(.none)
-                }
-
-                Section("Màu viền") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(BotVaultStore.accentPresets, id: \.hex) { preset in
-                                Button {
-                                    hexColor = preset.hex
-                                } label: {
-                                    Circle()
-                                        .fill(Color(hex: preset.hex))
-                                        .frame(width: 26, height: 26)
-                                        .overlay(
-                                            Circle().strokeBorder(Color.white, lineWidth: hexColor == preset.hex ? 2.5 : 0)
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-            }
-            .navigationTitle("Trình soạn Embed")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Hủy") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Xong") {
-                        let cleaned = hexColor.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-                        let colorInt = Int(cleaned, radix: 16) ?? 0x5865F2
-                        let emb = DiscordEmbed(
-                            title: title.isEmpty ? nil : title,
-                            description: description.isEmpty ? nil : description,
-                            url: nil,
-                            color: colorInt,
-                            timestamp: nil,
-                            footer: footer.isEmpty ? nil : DiscordEmbedFooter(text: footer, iconUrl: nil),
-                            image: imageURL.isEmpty ? nil : DiscordEmbedMedia(url: imageURL),
-                            thumbnail: nil,
-                            author: nil,
-                            fields: nil
-                        )
-                        onSave(emb)
-                        dismiss()
-                    }
-                    .disabled(title.isEmpty && description.isEmpty)
-                }
-            }
-            .onAppear {
-                if let initEmb = initialEmbed {
-                    title = initEmb.title ?? ""
-                    description = initEmb.description ?? ""
-                    footer = initEmb.footer?.text ?? ""
-                    imageURL = initEmb.image?.url ?? ""
-                }
-            }
-        }
-        .navigationViewStyle(.stack)
-    }
-}
-
 private struct ReactionPickerSheet: View {
-    let guildEmojis: [DiscordEmoji]
+    let currentGuild: DiscordGuild?
     let existingReactions: [DiscordReaction]
     let onSelect: (String, Bool) -> Void
+
+    @EnvironmentObject private var vault: BotVaultStore
+    @EnvironmentObject private var gateway: DiscordGatewayService
     @Environment(\.dismiss) private var dismiss
 
     @State private var customEmoji = ""
+    @State private var searchQuery = ""
+
+    private let cols = Array(repeating: GridItem(.flexible(), spacing: 8), count: 6)
 
     var body: some View {
         NavigationView {
@@ -1070,7 +1117,10 @@ private struct ReactionPickerSheet: View {
                                 onSelect(rxn.emoji.apiIdentifier, rxn.me)
                                 dismiss()
                             } label: {
-                                HStack {
+                                HStack(spacing: 8) {
+                                    if let url = rxn.emoji.imageURL {
+                                        AnimatedEmojiImageView(url: url, size: 20)
+                                    }
                                     Text(rxn.emoji.displayLabel)
                                     Spacer()
                                     Text(rxn.me ? "Bỏ chọn (\(rxn.count))" : "Thêm (\(rxn.count))")
@@ -1082,29 +1132,45 @@ private struct ReactionPickerSheet: View {
                     }
                 }
 
-                if !guildEmojis.isEmpty {
+                let serverEmojis = (currentGuild?.emojis ?? [])
+                    .filter { searchQuery.isEmpty || $0.name.lowercased().contains(searchQuery.lowercased()) }
+                if !serverEmojis.isEmpty {
                     Section("Emoji của máy chủ") {
-                        ForEach(guildEmojis) { em in
-                            Button {
-                                onSelect(em.apiIdentifier, false)
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 10) {
-                                    if let url = em.imageURL {
-                                        AsyncImage(url: url) { ph in
-                                            if case .success(let img) = ph {
-                                                img.resizable().scaledToFit()
-                                            }
-                                        }
-                                        .frame(width: 22, height: 22)
-                                    }
-                                    Text(":\(em.name):")
+                        LazyVGrid(columns: cols, spacing: 8) {
+                            ForEach(serverEmojis) { em in
+                                Button {
+                                    onSelect(em.apiIdentifier, false)
+                                    dismiss()
+                                } label: {
+                                    AnimatedEmojiImageView(url: em.imageURL, size: 30)
                                 }
+                                .buttonStyle(.plain)
                             }
                         }
+                        .padding(.vertical, 4)
+                    }
+                }
+
+                let appEmojis = gateway.applicationEmojis
+                    .filter { searchQuery.isEmpty || $0.name.lowercased().contains(searchQuery.lowercased()) }
+                if !appEmojis.isEmpty {
+                    Section("Emoji ứng dụng Bot") {
+                        LazyVGrid(columns: cols, spacing: 8) {
+                            ForEach(appEmojis) { em in
+                                Button {
+                                    onSelect(em.apiIdentifier, false)
+                                    dismiss()
+                                } label: {
+                                    AnimatedEmojiImageView(url: em.imageURL, size: 30)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 4)
                     }
                 }
             }
+            .searchable(text: $searchQuery, prompt: "Tìm emoji...")
             .navigationTitle("Biểu cảm")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1114,93 +1180,6 @@ private struct ReactionPickerSheet: View {
             }
         }
         .navigationViewStyle(.stack)
-    }
-}
-
-private struct MembersDrawerSheet: View {
-    let guildId: String
-    let roles: [DiscordRole]
-    let onMention: (DiscordMember) -> Void
-    let onOpenDM: (DiscordMember) -> Void
-
-    @EnvironmentObject private var gateway: DiscordGatewayService
-    @Environment(\.dismiss) private var dismiss
-    @State private var query = ""
-    @State private var results: [DiscordMember] = []
-
-    var body: some View {
-        NavigationView {
-            List {
-                ForEach(displayedMembers) { m in
-                    HStack(spacing: 10) {
-                        AsyncImage(url: m.avatarURL(guildId: guildId, size: 96)) { ph in
-                            if case .success(let img) = ph {
-                                img.resizable().scaledToFill()
-                            } else {
-                                Circle().fill(Color.gray.opacity(0.2))
-                            }
-                        }
-                        .frame(width: 34, height: 34)
-                        .clipShape(Circle())
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(m.displayName())
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(m.highestRoleColor(in: roles) ?? .primary)
-                            if let uname = m.user?.username {
-                                Text("@\(uname)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        Spacer()
-
-                        Button {
-                            onMention(m)
-                            dismiss()
-                        } label: {
-                            Image(systemName: "at")
-                        }
-                        .buttonStyle(.borderless)
-
-                        Button {
-                            onOpenDM(m)
-                            dismiss()
-                        } label: {
-                            Image(systemName: "bubble.left")
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                }
-            }
-            .searchable(text: $query, prompt: "Tìm thành viên...")
-            .onChange(of: query) { newQ in
-                Task {
-                    let q = newQ.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !q.isEmpty {
-                        results = await gateway.searchMembers(guildId: guildId, query: q)
-                    } else {
-                        results = []
-                    }
-                }
-            }
-            .navigationTitle("Thành viên")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Đóng") { dismiss() }
-                }
-            }
-        }
-        .navigationViewStyle(.stack)
-    }
-
-    private var displayedMembers: [DiscordMember] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !q.isEmpty && !results.isEmpty {
-            return results
-        }
-        return gateway.membersByGuild[guildId] ?? []
     }
 }
 

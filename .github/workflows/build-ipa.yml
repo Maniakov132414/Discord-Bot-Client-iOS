@@ -45,8 +45,8 @@ jobs:
           assert not os.path.exists("DiscordBotClient/Resources"), "Legacy Resources directory must not exist!"
           assert not os.path.exists("DiscordBotClient/WebBundle.json"), "Legacy WebBundle.json must not exist!"
           pl = plistlib.loads(open("DiscordBotClient/Info.plist", "rb").read())
-          assert pl.get("CFBundleShortVersionString") == "2.0.0", pl
-          assert pl.get("CFBundleVersion") == "3", pl
+          assert pl.get("CFBundleShortVersionString") == "2.1.0", pl
+          assert pl.get("CFBundleVersion") == "4", pl
           assert pl.get("CFBundleDisplayName") == "DiscordBot", pl
           assert pl.get("LSRequiresIPhoneOS") is True, pl
           assert pl.get("UILaunchScreen") == {}, pl
@@ -73,8 +73,8 @@ jobs:
               -archivePath "$ARCHIVE_PATH" \
               IPHONEOS_DEPLOYMENT_TARGET="$DEPLOY_TARGET" \
               APP_BUNDLE_ID=com.maniakov.discordbotclient \
-              MARKETING_VERSION=2.0.0 \
-              CURRENT_PROJECT_VERSION=3 \
+              MARKETING_VERSION=2.1.0 \
+              CURRENT_PROJECT_VERSION=4 \
               CODE_SIGN_IDENTITY="" \
               CODE_SIGNING_REQUIRED=NO \
               CODE_SIGNING_ALLOWED=NO \
@@ -188,8 +188,8 @@ jobs:
 
                   pl = plistlib.loads(zf.read("Payload/DiscordBotClient.app/Info.plist"))
                   assert pl.get("CFBundleIdentifier") == "com.maniakov.discordbotclient", pl
-                  assert pl.get("CFBundleShortVersionString") == "2.0.0", pl
-                  assert pl.get("CFBundleVersion") == "3", pl
+                  assert pl.get("CFBundleShortVersionString") == "2.1.0", pl
+                  assert pl.get("CFBundleVersion") == "4", pl
                   assert pl.get("CFBundleDisplayName") == "DiscordBot", pl
                   assert pl.get("MinimumOSVersion") == expected_min_os[name], pl
                   assert pl.get("LSRequiresIPhoneOS") is True, pl
@@ -219,16 +219,17 @@ jobs:
           path: dist/*.ipa
           retention-days: 30
 
-      - name: Publish GitHub Release v2.0.0
+      - name: Publish GitHub Release v2.1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.0
-          name: DiscordBotClient iOS v2.0.0
+          tag_name: v2.1.0
+          name: DiscordBotClient iOS v2.1.0
           body: |
-            ## DiscordBotClient iOS v2.0.0 (Build 3) — 100% Native SwiftUI
-            - Viết lại hoàn toàn bằng **SwiftUI + URLSessionWebSocketTask Gateway v10 + REST v10** (loại bỏ hoàn toàn `WKWebView` & `WebBundle.json`), kích thước siêu nhẹ, 100% SF Symbols, 0 emoji trên nút bấm.
-            - Hỗ trợ đa tài khoản Bot lưu 100% trên thiết bị (iOS Keychain + Application Support fallback), tự động chuyển Intents khi gặp lỗi `4014`, đính kèm Ảnh/Video/Tệp, Embed Builder, React, Ghim, Dọn dẹp kênh (Purge), DM theo User ID, Quản lý Shard & Presence.
-            - Đóng gói phẳng 8 tệp chuẩn `ManiFlix.ipa` (`xcodebuild archive`, 0 PlugIns, 0 `ldid`) cài đặt trực tiếp trên ESign, Feather, SideStore, AltStore & TrollStore.
+            ## DiscordBotClient iOS v2.1.0 (Build 4) — 100% Native SwiftUI
+            - **Custom/Animated Emoji & Hyperlink Emoji**: Render ảnh GIF/WebP động ngay trong dòng chat (`ImageIO` + `NSCache`), Jumbo Emoji, `EmojiInspectorSheet`, `EmojiPickerSheet` hỗ trợ chèn Emoji gốc `<:name:id>` hoặc FakeNitro Hyperlink `[name](cdn...)`, cùng `GET /applications/<appId>/emojis` & `GUILD_EMOJIS_UPDATE`.
+            - **Members theo Role & Member Profile**: Nhóm thành viên theo Role cao nhất có `hoist` + màu Role, tự gom thành viên từ tin nhắn khi thiếu Privileged Intent, chạm vào thành viên/tác giả mở `MemberProfileSheet` để Nhắn tin riêng (Mở DM), `@Mention`, sao chép ID / Thẻ / `@username` / Avatar.
+            - **Thiết bị hiển thị & Presence**: Chọn icon Online (`iOS`, `Android`, `Máy tính`, `Web`, `PlayStation`) cùng `Custom Status` (`type: 4`) và `Streaming` (`type: 1`).
+            - **Components V1 & V2 (`flags: 32768`) + Auto-Reply**: `MessageStudioSheet` dựng Embed + Nút bấm & Components V2 (`Container`, `Section + Thumbnail`, `TextDisplay`, `MediaGallery`, `Separator`, `ActionRow`) kèm Xem trước trực tiếp & Auto-Reply cho `INTERACTION_CREATE`.
           files: dist/*.ipa
           overwrite_files: true
           make_latest: true

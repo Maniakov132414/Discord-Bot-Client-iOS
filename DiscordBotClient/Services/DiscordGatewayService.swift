@@ -35,6 +35,7 @@ final class DiscordGatewayService: ObservableObject {
     @Published var intentWarningBanner: String?
     @Published var botUser: DiscordUser?
     @Published var application: DiscordApplication?
+    @Published var applicationEmojis: [DiscordEmoji] = []
     @Published var guilds: [DiscordGuild] = []
     @Published var selectedGuildId: String?
     @Published var selectedChannelId: String?
@@ -124,7 +125,6 @@ final class DiscordGatewayService: ObservableObject {
                 )
             }
         } catch {
-            // Fall back to cached flags if /applications/@me fails temporarily
             self.activeIntents = computeAllowedIntents(fromFlags: account.flags ?? 0)
         }
 
@@ -153,6 +153,7 @@ final class DiscordGatewayService: ObservableObject {
         if !keepData {
             guilds = []
             dmChannels = []
+            applicationEmojis = []
             messagesByChannel = [:]
             membersByGuild = [:]
             typingUsersByChannel = [:]
@@ -163,15 +164,17 @@ final class DiscordGatewayService: ObservableObject {
         }
     }
 
-    func updatePresence(status: BotPresenceStatus, activityType: BotActivityType, activityName: String) {
-        var activities: [[String: Any]] = []
-        let trimmed = activityName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            activities.append([
-                "name": trimmed,
-                "type": activityType.rawValue
-            ])
-        }
+    func updatePresence(
+        status: BotPresenceStatus,
+        activityType: BotActivityType,
+        activityName: String,
+        streamURL: String = ""
+    ) {
+        let activities = buildActivitiesPayload(
+            activityType: activityType,
+            activityName: activityName,
+            streamURL: streamURL
+        )
         let d: [String: Any] = [
             "since": NSNull(),
             "activities": activities,
@@ -181,7 +184,53 @@ final class DiscordGatewayService: ObservableObject {
         sendGatewayPayload(op: 3, d: d)
     }
 
-    func requestGuildMembers(guildId: String, query: String = "", limit: Int = 50) {
+    func applyPresenceAndPlatform(vault: BotVaultStore, previousPlatform: BotClientPlatform) async {
+        if vault.clientPlatform != previousPlatform, let active = vault.activeBot {
+            await connect(account: active, vault: vault)
+        } else {
+            updatePresence(
+                status: vault.presenceStatus,
+                activityType: vault.activityType,
+                activityName: vault.activityName,
+                streamURL: vault.activityStreamURL
+            )
+        }
+    }
+
+    private func buildActivitiesPayload(
+        activityType: BotActivityType,
+        activityName: String,
+        streamURL: String
+    ) -> [[String: Any]] {
+        let trimmed = activityName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        switch activityType {
+        case .custom:
+            return [[
+                "name": "Custom Status",
+                "type": 4,
+                "state": trimmed
+            ]]
+        case .streaming:
+            var dict: [String: Any] = [
+                "name": trimmed,
+                "type": 1
+            ]
+            let sURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sURL.isEmpty {
+                dict["url"] = sURL
+            }
+            return [dict]
+        default:
+            return [[
+                "name": trimmed,
+                "type": activityType.rawValue
+            ]]
+        }
+    }
+
+    func requestGuildMembers(guildId: String, query: String = "", limit: Int = 100) {
         let d: [String: Any] = [
             "guild_id": guildId,
             "query": query,
@@ -193,7 +242,6 @@ final class DiscordGatewayService: ObservableObject {
     // MARK: - Intents & Socket Lifecycle
 
     private func computeAllowedIntents(fromFlags flags: Int64) -> Int64 {
-        // Full bot intents = 53608447; mask privileged intents unless verified/enabled in flags
         var intents: Int64 = 53_608_447
         let hasPresence = (flags & ((1 << 12) | (1 << 13))) != 0
         let hasMembers = (flags & ((1 << 14) | (1 << 15))) != 0
@@ -211,7 +259,7 @@ final class DiscordGatewayService: ObservableObject {
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
 
         let task = urlSession.webSocketTask(with: url)
-        task.maximumMessageSize = 16 * 1024 * 1024 // 16 MB for large GUILD_CREATE
+        task.maximumMessageSize = 16 * 1024 * 1024
         self.webSocketTask = task
         task.resume()
         receiveLoop(for: task)
@@ -291,7 +339,7 @@ final class DiscordGatewayService: ObservableObject {
         }
 
         switch op {
-        case 10: // Hello
+        case 10:
             if let d = obj["d"] as? [String: Any],
                let interval = d["heartbeat_interval"] as? Int {
                 heartbeatIntervalMs = interval
@@ -304,18 +352,18 @@ final class DiscordGatewayService: ObservableObject {
                 sendIdentify()
             }
 
-        case 11: // Heartbeat ACK
+        case 11:
             heartbeatAcked = true
 
-        case 1: // Server requests immediate heartbeat
+        case 1:
             sendHeartbeat()
 
-        case 7: // Reconnect requested
+        case 7:
             connectionState = .reconnecting
             let target = resumeGatewayURL ?? defaultGatewayURL
             openWebSocket(urlString: target)
 
-        case 9: // Invalid session
+        case 9:
             let resumable = (obj["d"] as? Bool) ?? false
             if !resumable {
                 sessionId = nil
@@ -331,7 +379,7 @@ final class DiscordGatewayService: ObservableObject {
                 }
             }
 
-        case 0: // Dispatch
+        case 0:
             guard let eventName = obj["t"] as? String else { return }
             let d = obj["d"]
             await handleDispatchEvent(name: eventName, payload: d)
@@ -367,20 +415,16 @@ final class DiscordGatewayService: ObservableObject {
 
     private func sendIdentify() {
         let vault = BotVaultStore.shared
-        var activities: [[String: Any]] = []
-        let trimmedAct = vault.activityName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedAct.isEmpty {
-            activities.append(["name": trimmedAct, "type": vault.activityType.rawValue])
-        }
+        let activities = buildActivitiesPayload(
+            activityType: vault.activityType,
+            activityName: vault.activityName,
+            streamURL: vault.activityStreamURL
+        )
         let d: [String: Any] = [
             "token": activeToken,
             "intents": activeIntents,
             "shard": [shardIndex, max(1, totalShards)],
-            "properties": [
-                "os": "iOS",
-                "browser": "Discord iOS",
-                "device": "DiscordBotClient"
-            ],
+            "properties": vault.clientPlatform.identifyProperties,
             "presence": [
                 "status": vault.presenceStatus.rawValue,
                 "activities": activities,
@@ -426,6 +470,7 @@ final class DiscordGatewayService: ObservableObject {
             }
             connectionState = .connected
             statusError = nil
+            await loadApplicationEmojis()
 
         case "RESUMED":
             connectionState = .connected
@@ -436,19 +481,10 @@ final class DiscordGatewayService: ObservableObject {
                   var guild: DiscordGuild = decodeJSON(dict) else { return }
             if let membersArr = dict["members"] as? [[String: Any]] {
                 let decodedMembers: [DiscordMember] = membersArr.compactMap { decodeJSON($0) }
-                if !decodedMembers.isEmpty {
-                    var existing = membersByGuild[guild.id] ?? []
-                    for m in decodedMembers {
-                        if let idx = existing.firstIndex(where: { $0.user?.id == m.user?.id }) {
-                            existing[idx] = m
-                        } else {
-                            existing.append(m)
-                        }
-                    }
-                    membersByGuild[guild.id] = existing
+                for m in decodedMembers {
+                    upsertMember(guildId: guild.id, member: m)
                 }
             }
-            // Merge threads into channels list cleanly if provided
             if let threadsArr = dict["threads"] as? [[String: Any]] {
                 let threads: [DiscordChannel] = threadsArr.compactMap { decodeJSON($0) }
                 for th in threads where !guild.channels.contains(where: { $0.id == th.id }) {
@@ -475,6 +511,13 @@ final class DiscordGatewayService: ObservableObject {
                 merged.emojis = updated.emojis.isEmpty ? merged.emojis : updated.emojis
                 guilds[idx] = merged
             }
+
+        case "GUILD_EMOJIS_UPDATE":
+            guard let dict = payload as? [String: Any],
+                  let gid = dict["guild_id"] as? String,
+                  let emojisArr = dict["emojis"] as? [[String: Any]],
+                  let gIdx = guilds.firstIndex(where: { $0.id == gid }) else { return }
+            guilds[gIdx].emojis = emojisArr.compactMap { decodeJSON($0) }
 
         case "GUILD_DELETE":
             if let dict = payload as? [String: Any], let gid = dict["id"] as? String {
@@ -522,10 +565,7 @@ final class DiscordGatewayService: ObservableObject {
                 arr.append(msg)
                 messagesByChannel[msg.channelId] = arr
             }
-            if let gid = msg.guildId, var m = msg.member {
-                m.user = msg.author
-                upsertMember(guildId: gid, member: m)
-            }
+            harvestMember(from: msg)
             if var typers = typingUsersByChannel[msg.channelId] {
                 typers.removeValue(forKey: msg.author.id)
                 typingUsersByChannel[msg.channelId] = typers
@@ -549,8 +589,14 @@ final class DiscordGatewayService: ObservableObject {
                 if let pinned = dict["pinned"] as? Bool {
                     arr[idx].pinned = pinned
                 }
+                if let flags = dict["flags"] as? Int {
+                    arr[idx].flags = flags
+                }
                 if let embedsRaw = dict["embeds"], let embeds: [DiscordEmbed] = decodeJSON(embedsRaw) {
                     arr[idx].embeds = embeds
+                }
+                if let compsRaw = dict["components"], let comps: LossyArray<DiscordComponent> = decodeJSON(compsRaw) {
+                    arr[idx].components = comps.elements
                 }
             }
             messagesByChannel[cid] = arr
@@ -635,8 +681,57 @@ final class DiscordGatewayService: ObservableObject {
                 }
             }
 
+        case "INTERACTION_CREATE":
+            guard let dict = payload as? [String: Any],
+                  let interactionType = dict["type"] as? Int,
+                  interactionType == 3,
+                  let interactionId = dict["id"] as? String,
+                  let interactionToken = dict["token"] as? String else { return }
+            let dataDict = dict["data"] as? [String: Any]
+            let customId = (dataDict?["custom_id"] as? String) ?? ""
+            let rule = BotVaultStore.shared.buttonAutoReplies.first(where: { $0.customId == customId })
+            if let rule = rule {
+                try? await rest.respondToInteraction(
+                    interactionId: interactionId,
+                    interactionToken: interactionToken,
+                    type: 4,
+                    content: rule.replyContent,
+                    ephemeral: rule.ephemeral,
+                    token: activeToken
+                )
+            } else {
+                try? await rest.respondToInteraction(
+                    interactionId: interactionId,
+                    interactionToken: interactionToken,
+                    type: 6,
+                    token: activeToken
+                )
+            }
+
         default:
             break
+        }
+    }
+
+    private func loadApplicationEmojis() async {
+        guard let appId = application?.id ?? botUser?.id, !activeToken.isEmpty else { return }
+        if let items = try? await rest.fetchApplicationEmojis(applicationId: appId, token: activeToken) {
+            self.applicationEmojis = items
+        }
+    }
+
+    private func harvestMember(from msg: DiscordMessage) {
+        let resolvedGuildId = msg.guildId ?? guilds.first(where: { $0.channels.contains(where: { $0.id == msg.channelId }) })?.id
+        guard let gid = resolvedGuildId else { return }
+        if var m = msg.member {
+            m.user = m.user ?? msg.author
+            upsertMember(guildId: gid, member: m)
+        } else {
+            // Ensure author still shows in members list even without GUILD_MEMBERS intent
+            let existing = membersByGuild[gid]?.first(where: { $0.user?.id == msg.author.id })
+            if existing == nil {
+                upsertMember(guildId: gid, member: DiscordMember(user: msg.author, nick: nil, roles: [], avatar: nil, joinedAt: nil))
+            }
         }
     }
 
@@ -644,7 +739,12 @@ final class DiscordGatewayService: ObservableObject {
         guard let uid = member.user?.id else { return }
         var list = membersByGuild[guildId] ?? []
         if let idx = list.firstIndex(where: { $0.user?.id == uid }) {
-            list[idx] = member
+            var merged = member
+            if merged.roles.isEmpty && !list[idx].roles.isEmpty {
+                merged.roles = list[idx].roles
+            }
+            if merged.nick == nil { merged.nick = list[idx].nick }
+            list[idx] = merged
         } else {
             list.append(member)
         }
@@ -676,9 +776,14 @@ final class DiscordGatewayService: ObservableObject {
 
     func refreshGuildDetailsIfNeeded(_ guildId: String) async {
         guard !activeToken.isEmpty else { return }
-        if (membersByGuild[guildId]?.isEmpty ?? true) {
-            requestGuildMembers(guildId: guildId, query: "", limit: 50)
-            if let restMembers = try? await rest.fetchGuildMembers(guildId: guildId, limit: 100, token: activeToken) {
+        if let gIdx = guilds.firstIndex(where: { $0.id == guildId }), guilds[gIdx].emojis.isEmpty {
+            if let emojis = try? await rest.fetchGuildEmojis(guildId: guildId, token: activeToken) {
+                guilds[gIdx].emojis = emojis
+            }
+        }
+        if (membersByGuild[guildId]?.count ?? 0) < 20 {
+            requestGuildMembers(guildId: guildId, query: "", limit: 100)
+            if let restMembers = try? await rest.fetchGuildMembers(guildId: guildId, limit: 200, token: activeToken) {
                 for m in restMembers {
                     upsertMember(guildId: guildId, member: m)
                 }
@@ -694,6 +799,7 @@ final class DiscordGatewayService: ObservableObject {
             let list = try await rest.fetchMessages(channelId: channelId, limit: 50, token: activeToken)
             messagesByChannel[channelId] = list
             hasMoreOlderByChannel[channelId] = list.count >= 50
+            for m in list { harvestMember(from: m) }
         } catch {
             statusError = error.localizedDescription
         }
@@ -713,6 +819,7 @@ final class DiscordGatewayService: ObservableObject {
             current.insert(contentsOf: newItems, at: 0)
             messagesByChannel[channelId] = current
             hasMoreOlderByChannel[channelId] = older.count >= 50
+            for m in newItems { harvestMember(from: m) }
         } catch {
             statusError = error.localizedDescription
         }
@@ -722,6 +829,8 @@ final class DiscordGatewayService: ObservableObject {
         channelId: String,
         content: String,
         embeds: [DiscordEmbed] = [],
+        components: [DiscordComponent] = [],
+        flags: Int? = nil,
         replyToMessageId: String? = nil,
         attachments: [MediaUploadItem] = []
     ) async throws {
@@ -729,6 +838,8 @@ final class DiscordGatewayService: ObservableObject {
             channelId: channelId,
             content: content,
             embeds: embeds,
+            components: components,
+            flags: flags,
             replyToMessageId: replyToMessageId,
             attachments: attachments,
             token: activeToken
@@ -738,14 +849,24 @@ final class DiscordGatewayService: ObservableObject {
             arr.append(sent)
             messagesByChannel[channelId] = arr
         }
+        harvestMember(from: sent)
     }
 
-    func editMessage(channelId: String, messageId: String, content: String?, embeds: [DiscordEmbed]?) async throws {
+    func editMessage(
+        channelId: String,
+        messageId: String,
+        content: String?,
+        embeds: [DiscordEmbed]?,
+        components: [DiscordComponent]? = nil,
+        flags: Int? = nil
+    ) async throws {
         let updated = try await rest.editMessage(
             channelId: channelId,
             messageId: messageId,
             content: content,
             embeds: embeds,
+            components: components,
+            flags: flags,
             token: activeToken
         )
         if var arr = messagesByChannel[channelId], let idx = arr.firstIndex(where: { $0.id == messageId }) {
@@ -804,7 +925,7 @@ final class DiscordGatewayService: ObservableObject {
 
     func searchMembers(guildId: String, query: String) async -> [DiscordMember] {
         do {
-            let found = try await rest.fetchGuildMembers(guildId: guildId, limit: 50, query: query, token: activeToken)
+            let found = try await rest.fetchGuildMembers(guildId: guildId, limit: 100, query: query, token: activeToken)
             for m in found {
                 upsertMember(guildId: guildId, member: m)
             }

@@ -17,11 +17,15 @@ enum DiscordAPIError: LocalizedError {
     }
 }
 
+private struct ApplicationEmojisEnvelope: Decodable {
+    let items: [DiscordEmoji]
+}
+
 final class DiscordRESTClient {
     static let shared = DiscordRESTClient()
 
     private let baseURL = "https://discord.com/api/v10"
-    private let userAgent = "DiscordBot (https://github.com/cocconne/discord-bot-client-web, 2.0.0)"
+    private let userAgent = "DiscordBot (https://github.com/cocconne/discord-bot-client-web, 2.1.0)"
     private let session: URLSession
     private let decoder = JSONDecoder()
 
@@ -76,11 +80,17 @@ final class DiscordRESTClient {
         }
     }
 
-    // MARK: - Bot & Guilds
+    // MARK: - Bot, Emojis & Guilds
 
     func fetchCurrentApplication(token: String) async throws -> DiscordApplication {
         let req = try makeRequest(path: "/applications/@me?with_counts=true", token: token)
         return try await execute(req, as: DiscordApplication.self)
+    }
+
+    func fetchApplicationEmojis(applicationId: String, token: String) async throws -> [DiscordEmoji] {
+        let req = try makeRequest(path: "/applications/\(applicationId)/emojis", token: token)
+        let env = try await execute(req, as: ApplicationEmojisEnvelope.self)
+        return env.items
     }
 
     func fetchCurrentUser(token: String) async throws -> DiscordUser {
@@ -103,7 +113,7 @@ final class DiscordRESTClient {
         return try await execute(req, as: [DiscordEmoji].self)
     }
 
-    func fetchGuildMembers(guildId: String, limit: Int = 100, query: String? = nil, token: String) async throws -> [DiscordMember] {
+    func fetchGuildMembers(guildId: String, limit: Int = 200, query: String? = nil, token: String) async throws -> [DiscordMember] {
         let path: String
         if let q = query?.trimmingCharacters(in: .whitespacesAndNewlines), !q.isEmpty {
             let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
@@ -115,7 +125,7 @@ final class DiscordRESTClient {
         return try await execute(req, as: [DiscordMember].self)
     }
 
-    // MARK: - Messages
+    // MARK: - Messages & Components V2
 
     func fetchMessages(channelId: String, before: String? = nil, limit: Int = 50, token: String) async throws -> [DiscordMessage] {
         var path = "/channels/\(channelId)/messages?limit=\(min(max(limit, 1), 100))"
@@ -131,15 +141,29 @@ final class DiscordRESTClient {
         channelId: String,
         content: String,
         embeds: [DiscordEmbed] = [],
+        components: [DiscordComponent] = [],
+        flags: Int? = nil,
         replyToMessageId: String? = nil,
         attachments: [MediaUploadItem] = [],
         token: String
     ) async throws -> DiscordMessage {
-        var payload: [String: Any] = ["content": content]
-        if !embeds.isEmpty,
-           let embData = try? JSONEncoder().encode(embeds),
-           let embArr = try? JSONSerialization.jsonObject(with: embData) {
-            payload["embeds"] = embArr
+        let isV2 = ((flags ?? 0) & 32_768) != 0
+        var payload: [String: Any] = [:]
+
+        if !isV2 {
+            payload["content"] = content
+            if !embeds.isEmpty,
+               let embData = try? JSONEncoder().encode(embeds),
+               let embArr = try? JSONSerialization.jsonObject(with: embData) {
+                payload["embeds"] = embArr
+            }
+        }
+        if let flags = flags, flags != 0 {
+            payload["flags"] = flags
+        }
+        let mappedComponents = components.compactMap { $0.toAPIDictionary() }
+        if !mappedComponents.isEmpty {
+            payload["components"] = mappedComponents
         }
         if let replyId = replyToMessageId, !replyId.isEmpty {
             payload["message_reference"] = [
@@ -154,7 +178,6 @@ final class DiscordRESTClient {
             return try await execute(req, as: DiscordMessage.self)
         }
 
-        // multipart/form-data upload
         let boundary = "Boundary-\(UUID().uuidString)"
         var body = Data()
         var attMeta: [[String: Any]] = []
@@ -190,19 +213,63 @@ final class DiscordRESTClient {
         return try await execute(req, as: DiscordMessage.self)
     }
 
-    func editMessage(channelId: String, messageId: String, content: String?, embeds: [DiscordEmbed]?, token: String) async throws -> DiscordMessage {
+    func editMessage(
+        channelId: String,
+        messageId: String,
+        content: String?,
+        embeds: [DiscordEmbed]?,
+        components: [DiscordComponent]? = nil,
+        flags: Int? = nil,
+        token: String
+    ) async throws -> DiscordMessage {
+        let isV2 = ((flags ?? 0) & 32_768) != 0
         var payload: [String: Any] = [:]
-        if let content = content {
-            payload["content"] = content
+
+        if !isV2 {
+            if let content = content {
+                payload["content"] = content
+            }
+            if let embeds = embeds,
+               let embData = try? JSONEncoder().encode(embeds),
+               let embArr = try? JSONSerialization.jsonObject(with: embData) {
+                payload["embeds"] = embArr
+            }
         }
-        if let embeds = embeds,
-           let embData = try? JSONEncoder().encode(embeds),
-           let embArr = try? JSONSerialization.jsonObject(with: embData) {
-            payload["embeds"] = embArr
+        if let flags = flags, flags != 0 {
+            payload["flags"] = flags
+        }
+        if let components = components {
+            payload["components"] = components.compactMap { $0.toAPIDictionary() }
         }
         let body = try JSONSerialization.data(withJSONObject: payload)
         let req = try makeRequest(path: "/channels/\(channelId)/messages/\(messageId)", method: "PATCH", token: token, body: body)
         return try await execute(req, as: DiscordMessage.self)
+    }
+
+    func respondToInteraction(
+        interactionId: String,
+        interactionToken: String,
+        type: Int,
+        content: String? = nil,
+        ephemeral: Bool = false,
+        token: String
+    ) async throws {
+        var payload: [String: Any] = ["type": type]
+        if type == 4 {
+            var data: [String: Any] = ["content": content ?? ""]
+            if ephemeral {
+                data["flags"] = 64
+            }
+            payload["data"] = data
+        }
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let req = try makeRequest(
+            path: "/interactions/\(interactionId)/\(interactionToken)/callback",
+            method: "POST",
+            token: token,
+            body: body
+        )
+        _ = try await executeRaw(req)
     }
 
     func deleteMessage(channelId: String, messageId: String, token: String) async throws {

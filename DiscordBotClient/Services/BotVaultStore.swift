@@ -26,6 +26,22 @@ final class BotVaultStore: ObservableObject {
     @Published var activityName: String {
         didSet { UserDefaults.standard.set(activityName, forKey: "dbc.v2.activityName") }
     }
+    @Published var activityStreamURL: String {
+        didSet { UserDefaults.standard.set(activityStreamURL, forKey: "dbc.v2.activityStreamURL") }
+    }
+    @Published var clientPlatform: BotClientPlatform {
+        didSet { UserDefaults.standard.set(clientPlatform.rawValue, forKey: "dbc.v2.clientPlatform") }
+    }
+    @Published var emojiInsertAsHyperlink: Bool {
+        didSet { UserDefaults.standard.set(emojiInsertAsHyperlink, forKey: "dbc.v2.emojiInsertAsHyperlink") }
+    }
+    @Published var buttonAutoReplies: [ButtonAutoReplyRule] {
+        didSet {
+            if let data = try? JSONEncoder().encode(buttonAutoReplies) {
+                UserDefaults.standard.set(data, forKey: "dbc.v2.buttonAutoReplies")
+            }
+        }
+    }
     @Published var shardIndex: Int {
         didSet { UserDefaults.standard.set(shardIndex, forKey: "dbc.v2.shardIndex") }
     }
@@ -55,6 +71,15 @@ final class BotVaultStore: ObservableObject {
         let rawAct = UserDefaults.standard.object(forKey: "dbc.v2.activityType") as? Int ?? 0
         self.activityType = BotActivityType(rawValue: rawAct) ?? .playing
         self.activityName = UserDefaults.standard.string(forKey: "dbc.v2.activityName") ?? ""
+        self.activityStreamURL = UserDefaults.standard.string(forKey: "dbc.v2.activityStreamURL") ?? ""
+        self.clientPlatform = BotClientPlatform(rawValue: UserDefaults.standard.string(forKey: "dbc.v2.clientPlatform") ?? "") ?? .discordIOS
+        self.emojiInsertAsHyperlink = UserDefaults.standard.bool(forKey: "dbc.v2.emojiInsertAsHyperlink")
+        if let rawRules = UserDefaults.standard.data(forKey: "dbc.v2.buttonAutoReplies"),
+           let decodedRules = try? JSONDecoder().decode([ButtonAutoReplyRule].self, from: rawRules) {
+            self.buttonAutoReplies = decodedRules
+        } else {
+            self.buttonAutoReplies = []
+        }
         self.shardIndex = UserDefaults.standard.object(forKey: "dbc.v2.shardIndex") as? Int ?? 0
         self.totalShards = max(1, UserDefaults.standard.object(forKey: "dbc.v2.totalShards") as? Int ?? 1)
         self.bots = loadVault()
@@ -70,7 +95,7 @@ final class BotVaultStore: ObservableObject {
 
     var backgroundColor: Color {
         switch theme {
-        case .discordDark: return Color(red: 0.110, green: 0.114, blue: 0.133) // #1C1D22
+        case .discordDark: return Color(red: 0.110, green: 0.114, blue: 0.133)
         case .midnightOLED: return Color.black
         case .light: return Color(red: 0.957, green: 0.961, blue: 0.973)
         }
@@ -78,7 +103,7 @@ final class BotVaultStore: ObservableObject {
 
     var railBackgroundColor: Color {
         switch theme {
-        case .discordDark: return Color(red: 0.067, green: 0.071, blue: 0.078) // #111214
+        case .discordDark: return Color(red: 0.067, green: 0.071, blue: 0.078)
         case .midnightOLED: return Color.black
         case .light: return Color(red: 0.902, green: 0.910, blue: 0.929)
         }
@@ -86,7 +111,7 @@ final class BotVaultStore: ObservableObject {
 
     var surfaceColor: Color {
         switch theme {
-        case .discordDark: return Color(red: 0.169, green: 0.176, blue: 0.192) // #2B2D31
+        case .discordDark: return Color(red: 0.169, green: 0.176, blue: 0.192)
         case .midnightOLED: return Color(red: 0.078, green: 0.082, blue: 0.094)
         case .light: return Color.white
         }
@@ -94,7 +119,7 @@ final class BotVaultStore: ObservableObject {
 
     var elevatedSurfaceColor: Color {
         switch theme {
-        case .discordDark: return Color(red: 0.216, green: 0.227, blue: 0.247) // #373A3F
+        case .discordDark: return Color(red: 0.216, green: 0.227, blue: 0.247)
         case .midnightOLED: return Color(red: 0.129, green: 0.137, blue: 0.157)
         case .light: return Color(red: 0.929, green: 0.937, blue: 0.957)
         }
@@ -177,6 +202,22 @@ final class BotVaultStore: ObservableObject {
         return saved
     }
 
+    func upsertAutoReply(customId: String, replyContent: String, ephemeral: Bool) {
+        let cid = customId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reply = replyContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cid.isEmpty else { return }
+        if reply.isEmpty {
+            buttonAutoReplies.removeAll(where: { $0.customId == cid })
+            return
+        }
+        let rule = ButtonAutoReplyRule(customId: cid, replyContent: reply, ephemeral: ephemeral)
+        if let idx = buttonAutoReplies.firstIndex(where: { $0.customId == cid }) {
+            buttonAutoReplies[idx] = rule
+        } else {
+            buttonAutoReplies.append(rule)
+        }
+    }
+
     func renameBot(id: String, name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let idx = bots.firstIndex(where: { $0.id == id }) else { return }
@@ -246,7 +287,6 @@ final class BotVaultStore: ObservableObject {
            let decoded = try? JSONDecoder().decode([SavedBotAccount].self, from: data) {
             return decoded
         }
-        // Migrate v1 Keychain/fallback entries if present
         struct LegacyEntry: Codable {
             let id: String
             var name: String
@@ -292,7 +332,6 @@ final class BotVaultStore: ObservableObject {
             addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             status = SecItemAdd(addQuery as CFDictionary, nil)
         }
-        // Always mirror cleanly if Keychain lacks entitlements (-34018) or returns error
         if status == errSecMissingEntitlement || status != errSecSuccess {
             if let fileURL = fallbackVaultFileURL() {
                 try? data.write(to: fileURL, options: .atomic)

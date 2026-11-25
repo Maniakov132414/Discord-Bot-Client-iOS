@@ -7,6 +7,8 @@ struct BotAccountsSettingsView: View {
 
     @State private var showAddBotSheet = false
     @State private var toastMessage: String?
+    @State private var appliedPlatform: BotClientPlatform = BotVaultStore.shared.clientPlatform
+    @State private var isApplyingPresence = false
 
     var body: some View {
         NavigationView {
@@ -26,7 +28,7 @@ struct BotAccountsSettingsView: View {
                                     Circle()
                                         .fill(gateway.connectionState.color)
                                         .frame(width: 8, height: 8)
-                                    Text("\(gateway.connectionState.title) • Shard \(vault.shardIndex)/\(vault.totalShards) • \(gateway.guilds.count) máy chủ")
+                                    Text("\(gateway.connectionState.title) • \(vault.clientPlatform.title) • Shard \(vault.shardIndex)/\(vault.totalShards)")
                                         .font(.caption2)
                                         .foregroundColor(vault.secondaryTextColor)
                                 }
@@ -43,7 +45,13 @@ struct BotAccountsSettingsView: View {
                     }
                 }
 
-                Section("Trạng thái & Hoạt động Bot") {
+                Section {
+                    Picker("Thiết bị hiển thị", selection: $vault.clientPlatform) {
+                        ForEach(BotClientPlatform.allCases) { plat in
+                            Label(plat.title, systemImage: plat.sfSymbolName).tag(plat)
+                        }
+                    }
+
                     Picker("Trạng thái", selection: $vault.presenceStatus) {
                         ForEach(BotPresenceStatus.allCases) { st in
                             Text(st.title).tag(st)
@@ -56,18 +64,43 @@ struct BotAccountsSettingsView: View {
                         }
                     }
 
-                    TextField("Nội dung hoạt động (tuỳ chọn)...", text: $vault.activityName)
+                    TextField(
+                        vault.activityType == .custom ? "Nội dung Custom Status..." : "Nội dung hoạt động (tuỳ chọn)...",
+                        text: $vault.activityName
+                    )
+
+                    if vault.activityType == .streaming {
+                        TextField("URL Twitch / YouTube (Streaming)...", text: $vault.activityStreamURL)
+                            .keyboardType(.URL)
+                            .autocapitalization(.none)
+                    }
 
                     Button {
-                        gateway.updatePresence(
-                            status: vault.presenceStatus,
-                            activityType: vault.activityType,
-                            activityName: vault.activityName
-                        )
-                        toastMessage = "Đã cập nhật trạng thái Presence lên Gateway."
+                        Task {
+                            isApplyingPresence = true
+                            let prev = appliedPlatform
+                            await gateway.applyPresenceAndPlatform(vault: vault, previousPlatform: prev)
+                            appliedPlatform = vault.clientPlatform
+                            toastMessage = prev != vault.clientPlatform
+                                ? "Đã kết nối lại Gateway với thiết bị \(vault.clientPlatform.title)."
+                                : "Đã cập nhật trạng thái Presence lên Gateway."
+                            isApplyingPresence = false
+                        }
                     } label: {
-                        Label("Áp dụng trạng thái ngay", systemImage: "checkmark.circle.fill")
+                        HStack {
+                            Label(
+                                isApplyingPresence ? "Đang áp dụng..." : "Áp dụng thiết bị & trạng thái",
+                                systemImage: "checkmark.circle.fill"
+                            )
+                            Spacer()
+                            if isApplyingPresence { ProgressView() }
+                        }
                     }
+                    .disabled(isApplyingPresence)
+                } header: {
+                    Text("Thiết bị & Trạng thái (Presence)")
+                } footer: {
+                    Text("Khi đổi Thiết bị hiển thị (Điện thoại / Máy tính / Web / Console), ứng dụng sẽ tự kết nối lại IDENTIFY để Discord đổi icon Online tương ứng.")
                 }
 
                 Section("Sharding") {
@@ -80,6 +113,23 @@ struct BotAccountsSettingsView: View {
                         }
                     } label: {
                         Label("Kết nối lại với cấu hình Shard này", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+
+                if !vault.buttonAutoReplies.isEmpty {
+                    Section("Auto-Reply cho Nút bấm (\(vault.buttonAutoReplies.count))") {
+                        ForEach(vault.buttonAutoReplies) { rule in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(rule.customId)
+                                    .font(.caption.monospaced().weight(.bold))
+                                Text("\(rule.replyContent) • \(rule.ephemeral ? "Ephemeral" : "Public")")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .onDelete { offsets in
+                            vault.buttonAutoReplies.remove(atOffsets: offsets)
+                        }
                     }
                 }
 
@@ -186,6 +236,9 @@ struct BotAccountsSettingsView: View {
             }
             .navigationTitle("Tài khoản & Cài đặt")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                appliedPlatform = vault.clientPlatform
+            }
             .sheet(isPresented: $showAddBotSheet) {
                 AddBotModalSheet()
                     .environmentObject(vault)

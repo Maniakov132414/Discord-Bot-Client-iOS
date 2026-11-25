@@ -89,13 +89,23 @@ struct DiscordEmoji: Codable, Identifiable, Equatable {
     var available: Bool?
 
     var imageURL: URL? {
-        let ext = (animated ?? false) ? "gif" : "png"
-        return URL(string: "https://cdn.discordapp.com/emojis/\(id).\(ext)?size=96")
+        if animated == true {
+            return URL(string: "https://cdn.discordapp.com/emojis/\(id).gif?size=96")
+        }
+        return URL(string: "https://cdn.discordapp.com/emojis/\(id).webp?size=96&lossless=true")
     }
 
     var markdownString: String {
         let prefix = (animated ?? false) ? "a" : ""
         return "<\(prefix):\(name):\(id)>"
+    }
+
+    var hyperlinkMarkdown: String {
+        let safeName = name.isEmpty ? "emoji" : name
+        if animated == true {
+            return "[\(safeName)](https://cdn.discordapp.com/emojis/\(id).gif?size=48&name=\(safeName))"
+        }
+        return "[\(safeName)](https://cdn.discordapp.com/emojis/\(id).webp?size=48&name=\(safeName)&lossless=true)"
     }
 
     var apiIdentifier: String {
@@ -110,8 +120,19 @@ struct DiscordPartialEmoji: Codable, Equatable, Hashable {
 
     var imageURL: URL? {
         guard let id = id, !id.isEmpty else { return nil }
-        let ext = (animated ?? false) ? "gif" : "png"
-        return URL(string: "https://cdn.discordapp.com/emojis/\(id).\(ext)?size=64")
+        if animated == true {
+            return URL(string: "https://cdn.discordapp.com/emojis/\(id).gif?size=96")
+        }
+        return URL(string: "https://cdn.discordapp.com/emojis/\(id).webp?size=96&lossless=true")
+    }
+
+    var hyperlinkMarkdown: String? {
+        guard let id = id, !id.isEmpty else { return nil }
+        let safeName = (name?.isEmpty == false) ? name! : "emoji"
+        if animated == true {
+            return "[\(safeName)](https://cdn.discordapp.com/emojis/\(id).gif?size=48&name=\(safeName))"
+        }
+        return "[\(safeName)](https://cdn.discordapp.com/emojis/\(id).webp?size=48&name=\(safeName)&lossless=true)"
     }
 
     var apiIdentifier: String {
@@ -218,6 +239,14 @@ struct DiscordMember: Codable, Identifiable, Equatable {
         if let nick = nick, !nick.isEmpty { return nick }
         if let u = user { return u.displayName }
         return fallback ?? "Unknown"
+    }
+
+    func highestRole(in guildRoles: [DiscordRole], hoistedOnly: Bool = false) -> DiscordRole? {
+        let roleSet = Set(roles)
+        return guildRoles
+            .filter { roleSet.contains($0.id) && (!hoistedOnly || $0.hoist == true) }
+            .sorted { $0.position > $1.position }
+            .first
     }
 
     func highestRoleColor(in guildRoles: [DiscordRole]) -> Color? {
@@ -327,6 +356,336 @@ struct DiscordEmbed: Codable, Equatable, Identifiable {
     }
 }
 
+struct DiscordSelectOption: Codable, Equatable, Identifiable {
+    var label: String
+    var value: String
+    var description: String?
+    var isDefault: Bool?
+
+    var id: String { value }
+
+    enum CodingKeys: String, CodingKey {
+        case label, value, description
+        case isDefault = "default"
+    }
+}
+
+struct DiscordUnfurledMediaItem: Codable, Equatable {
+    var url: String
+}
+
+struct DiscordMediaGalleryItem: Codable, Equatable, Identifiable {
+    var localId: String = UUID().uuidString
+    var media: DiscordUnfurledMediaItem
+    var description: String?
+    var spoiler: Bool?
+
+    var id: String { localId }
+
+    enum CodingKeys: String, CodingKey {
+        case media, description, spoiler
+    }
+
+    static func == (lhs: DiscordMediaGalleryItem, rhs: DiscordMediaGalleryItem) -> Bool {
+        lhs.media == rhs.media && lhs.description == rhs.description && lhs.spoiler == rhs.spoiler
+    }
+}
+
+struct DiscordComponent: Codable, Identifiable, Equatable {
+    var localId: String = UUID().uuidString
+    var id: String { localId }
+
+    var type: Int
+    var customId: String?
+    var style: Int?
+    var label: String?
+    var emoji: DiscordPartialEmoji?
+    var url: String?
+    var disabled: Bool?
+    var placeholder: String?
+    var minValues: Int?
+    var maxValues: Int?
+    var options: [DiscordSelectOption]?
+    var content: String?
+    var media: DiscordUnfurledMediaItem?
+    var file: DiscordUnfurledMediaItem?
+    var description: String?
+    var spoiler: Bool?
+    var items: [DiscordMediaGalleryItem]?
+    var divider: Bool?
+    var spacing: Int?
+    var accentColor: Int?
+    var components: [DiscordComponent]?
+    // Stored in a 0..1 array to prevent recursive value-type struct compile error in Swift
+    private var accessoryStorage: [DiscordComponent]?
+
+    var accessory: DiscordComponent? {
+        get { accessoryStorage?.first }
+        set { accessoryStorage = newValue.map { [$0] } }
+    }
+
+    init(
+        type: Int,
+        customId: String? = nil,
+        style: Int? = nil,
+        label: String? = nil,
+        emoji: DiscordPartialEmoji? = nil,
+        url: String? = nil,
+        disabled: Bool? = nil,
+        placeholder: String? = nil,
+        minValues: Int? = nil,
+        maxValues: Int? = nil,
+        options: [DiscordSelectOption]? = nil,
+        content: String? = nil,
+        media: DiscordUnfurledMediaItem? = nil,
+        file: DiscordUnfurledMediaItem? = nil,
+        description: String? = nil,
+        spoiler: Bool? = nil,
+        items: [DiscordMediaGalleryItem]? = nil,
+        divider: Bool? = nil,
+        spacing: Int? = nil,
+        accentColor: Int? = nil,
+        components: [DiscordComponent]? = nil,
+        accessory: DiscordComponent? = nil
+    ) {
+        self.type = type
+        self.customId = customId
+        self.style = style
+        self.label = label
+        self.emoji = emoji
+        self.url = url
+        self.disabled = disabled
+        self.placeholder = placeholder
+        self.minValues = minValues
+        self.maxValues = maxValues
+        self.options = options
+        self.content = content
+        self.media = media
+        self.file = file
+        self.description = description
+        self.spoiler = spoiler
+        self.items = items
+        self.divider = divider
+        self.spacing = spacing
+        self.accentColor = accentColor
+        self.components = components
+        self.accessoryStorage = accessory.map { [$0] }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type, style, label, emoji, url, disabled, placeholder, options
+        case content, media, file, description, spoiler, items, divider, spacing, components
+        case customId = "custom_id"
+        case minValues = "min_values"
+        case maxValues = "max_values"
+        case accentColor = "accent_color"
+        case accessory = "accessory"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decode(Int.self, forKey: .type)
+        customId = try c.decodeIfPresent(String.self, forKey: .customId)
+        style = try c.decodeIfPresent(Int.self, forKey: .style)
+        label = try c.decodeIfPresent(String.self, forKey: .label)
+        emoji = try c.decodeIfPresent(DiscordPartialEmoji.self, forKey: .emoji)
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        disabled = try c.decodeIfPresent(Bool.self, forKey: .disabled)
+        placeholder = try c.decodeIfPresent(String.self, forKey: .placeholder)
+        minValues = try c.decodeIfPresent(Int.self, forKey: .minValues)
+        maxValues = try c.decodeIfPresent(Int.self, forKey: .maxValues)
+        options = try c.decodeIfPresent([DiscordSelectOption].self, forKey: .options)
+        content = try c.decodeIfPresent(String.self, forKey: .content)
+        media = try c.decodeIfPresent(DiscordUnfurledMediaItem.self, forKey: .media)
+        file = try c.decodeIfPresent(DiscordUnfurledMediaItem.self, forKey: .file)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        spoiler = try c.decodeIfPresent(Bool.self, forKey: .spoiler)
+        items = try c.decodeIfPresent([DiscordMediaGalleryItem].self, forKey: .items)
+        divider = try c.decodeIfPresent(Bool.self, forKey: .divider)
+        spacing = try c.decodeIfPresent(Int.self, forKey: .spacing)
+        accentColor = try c.decodeIfPresent(Int.self, forKey: .accentColor)
+        if let lossy = try? c.decodeIfPresent(LossyArray<DiscordComponent>.self, forKey: .components) {
+            components = lossy.elements
+        } else {
+            components = nil
+        }
+        if let acc = try? c.decodeIfPresent(DiscordComponent.self, forKey: .accessory) {
+            accessoryStorage = [acc]
+        } else {
+            accessoryStorage = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(type, forKey: .type)
+        try c.encodeIfPresent(customId, forKey: .customId)
+        try c.encodeIfPresent(style, forKey: .style)
+        try c.encodeIfPresent(label, forKey: .label)
+        try c.encodeIfPresent(emoji, forKey: .emoji)
+        try c.encodeIfPresent(url, forKey: .url)
+        try c.encodeIfPresent(disabled, forKey: .disabled)
+        try c.encodeIfPresent(placeholder, forKey: .placeholder)
+        try c.encodeIfPresent(minValues, forKey: .minValues)
+        try c.encodeIfPresent(maxValues, forKey: .maxValues)
+        try c.encodeIfPresent(options, forKey: .options)
+        try c.encodeIfPresent(content, forKey: .content)
+        try c.encodeIfPresent(media, forKey: .media)
+        try c.encodeIfPresent(file, forKey: .file)
+        try c.encodeIfPresent(description, forKey: .description)
+        try c.encodeIfPresent(spoiler, forKey: .spoiler)
+        try c.encodeIfPresent(items, forKey: .items)
+        try c.encodeIfPresent(divider, forKey: .divider)
+        try c.encodeIfPresent(spacing, forKey: .spacing)
+        try c.encodeIfPresent(accentColor, forKey: .accentColor)
+        try c.encodeIfPresent(components, forKey: .components)
+        if let acc = accessoryStorage?.first {
+            try c.encode(acc, forKey: .accessory)
+        }
+    }
+
+    static func == (lhs: DiscordComponent, rhs: DiscordComponent) -> Bool {
+        lhs.type == rhs.type &&
+        lhs.customId == rhs.customId &&
+        lhs.style == rhs.style &&
+        lhs.label == rhs.label &&
+        lhs.emoji == rhs.emoji &&
+        lhs.url == rhs.url &&
+        lhs.disabled == rhs.disabled &&
+        lhs.placeholder == rhs.placeholder &&
+        lhs.content == rhs.content &&
+        lhs.media == rhs.media &&
+        lhs.file == rhs.file &&
+        lhs.description == rhs.description &&
+        lhs.spoiler == rhs.spoiler &&
+        lhs.items == rhs.items &&
+        lhs.divider == rhs.divider &&
+        lhs.spacing == rhs.spacing &&
+        lhs.accentColor == rhs.accentColor &&
+        lhs.components == rhs.components &&
+        lhs.accessoryStorage == rhs.accessoryStorage
+    }
+
+    func toAPIDictionary() -> [String: Any]? {
+        switch type {
+        case 1: // ActionRow
+            let children = (components ?? []).compactMap { $0.toAPIDictionary() }
+            guard !children.isEmpty else { return nil }
+            return ["type": 1, "components": children]
+
+        case 2: // Button
+            let st = style ?? 1
+            var dict: [String: Any] = ["type": 2, "style": st]
+            if let label = label, !label.isEmpty { dict["label"] = label }
+            if let disabled = disabled { dict["disabled"] = disabled }
+            if let emoji = emoji, (emoji.name != nil || emoji.id != nil) {
+                var eDict: [String: Any] = [:]
+                if let n = emoji.name { eDict["name"] = n }
+                if let eid = emoji.id { eDict["id"] = eid }
+                if let anim = emoji.animated { eDict["animated"] = anim }
+                dict["emoji"] = eDict
+            }
+            if st == 5 {
+                guard let u = url?.trimmingCharacters(in: .whitespacesAndNewlines), !u.isEmpty else { return nil }
+                dict["url"] = u
+            } else {
+                let cid = (customId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+                    ? customId!.trimmingCharacters(in: .whitespacesAndNewlines)
+                    : "dbc_btn_\(localId.prefix(8))"
+                dict["custom_id"] = cid
+            }
+            return dict
+
+        case 9: // Section (must have accessory; otherwise flatten cleanly to TextDisplay 10 to prevent API 50035)
+            let children = (components ?? []).compactMap { $0.toAPIDictionary() }
+            guard let acc = accessory?.toAPIDictionary() else {
+                let joined = (components ?? [])
+                    .compactMap { $0.content }
+                    .joined(separator: "\n")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !joined.isEmpty else { return nil }
+                return ["type": 10, "content": joined]
+            }
+            guard !children.isEmpty else { return nil }
+            return ["type": 9, "components": children, "accessory": acc]
+
+        case 10: // TextDisplay
+            let txt = content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !txt.isEmpty else { return nil }
+            return ["type": 10, "content": txt]
+
+        case 11: // Thumbnail
+            guard let mUrl = media?.url.trimmingCharacters(in: .whitespacesAndNewlines), !mUrl.isEmpty else { return nil }
+            var dict: [String: Any] = ["type": 11, "media": ["url": mUrl]]
+            if let desc = description, !desc.isEmpty { dict["description"] = desc }
+            if let sp = spoiler { dict["spoiler"] = sp }
+            return dict
+
+        case 12: // MediaGallery
+            let mapped: [[String: Any]] = (items ?? []).compactMap { item in
+                let u = item.media.url.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !u.isEmpty else { return nil }
+                var d: [String: Any] = ["media": ["url": u]]
+                if let desc = item.description, !desc.isEmpty { d["description"] = desc }
+                if let sp = item.spoiler { d["spoiler"] = sp }
+                return d
+            }
+            guard !mapped.isEmpty else { return nil }
+            return ["type": 12, "items": mapped]
+
+        case 13: // File
+            guard let fUrl = file?.url.trimmingCharacters(in: .whitespacesAndNewlines), !fUrl.isEmpty else { return nil }
+            var dict: [String: Any] = ["type": 13, "file": ["url": fUrl]]
+            if let sp = spoiler { dict["spoiler"] = sp }
+            return dict
+
+        case 14: // Separator
+            var dict: [String: Any] = ["type": 14]
+            if let div = divider { dict["divider"] = div }
+            if let sp = spacing { dict["spacing"] = sp }
+            return dict
+
+        case 17: // Container
+            let children = (components ?? []).compactMap { $0.toAPIDictionary() }
+            guard !children.isEmpty else { return nil }
+            var dict: [String: Any] = ["type": 17, "components": children]
+            if let ac = accentColor { dict["accent_color"] = ac }
+            if let sp = spoiler { dict["spoiler"] = sp }
+            return dict
+
+        default:
+            return nil
+        }
+    }
+}
+
+private struct EmptyDecodable: Decodable {}
+
+struct LossyArray<Element: Decodable>: Decodable {
+    let elements: [Element]
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var out: [Element] = []
+        while !container.isAtEnd {
+            if let item = try? container.decode(Element.self) {
+                out.append(item)
+            } else {
+                _ = try? container.decode(EmptyDecodable.self)
+            }
+        }
+        self.elements = out
+    }
+}
+
+struct ButtonAutoReplyRule: Codable, Identifiable, Equatable {
+    var customId: String
+    var replyContent: String
+    var ephemeral: Bool
+
+    var id: String { customId }
+}
+
 struct DiscordReaction: Codable, Equatable, Identifiable {
     var count: Int
     var me: Bool
@@ -359,17 +718,19 @@ struct DiscordMessage: Codable, Identifiable, Equatable {
     var timestamp: String
     var editedTimestamp: String?
     var pinned: Bool?
+    var flags: Int?
     var mentionEveryone: Bool?
     var mentions: [DiscordUser]?
     var mentionRoles: [String]?
     var attachments: [DiscordAttachment] = []
     var embeds: [DiscordEmbed] = []
+    var components: [DiscordComponent]?
     var reactions: [DiscordReaction]?
     var referencedMessage: DiscordReferencedMessage?
     var type: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, author, member, content, timestamp, pinned, mentions, attachments, embeds, reactions, type
+        case id, author, member, content, timestamp, pinned, flags, mentions, attachments, embeds, components, reactions, type
         case channelId = "channel_id"
         case guildId = "guild_id"
         case editedTimestamp = "edited_timestamp"
@@ -377,6 +738,35 @@ struct DiscordMessage: Codable, Identifiable, Equatable {
         case mentionRoles = "mention_roles"
         case referencedMessage = "referenced_message"
     }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        channelId = try c.decode(String.self, forKey: .channelId)
+        guildId = try c.decodeIfPresent(String.self, forKey: .guildId)
+        author = try c.decode(DiscordUser.self, forKey: .author)
+        member = try c.decodeIfPresent(DiscordMember.self, forKey: .member)
+        content = (try? c.decodeIfPresent(String.self, forKey: .content)) ?? ""
+        timestamp = try c.decode(String.self, forKey: .timestamp)
+        editedTimestamp = try c.decodeIfPresent(String.self, forKey: .editedTimestamp)
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned)
+        flags = try c.decodeIfPresent(Int.self, forKey: .flags)
+        mentionEveryone = try c.decodeIfPresent(Bool.self, forKey: .mentionEveryone)
+        mentions = try c.decodeIfPresent([DiscordUser].self, forKey: .mentions)
+        mentionRoles = try c.decodeIfPresent([String].self, forKey: .mentionRoles)
+        attachments = (try? c.decodeIfPresent([DiscordAttachment].self, forKey: .attachments)) ?? []
+        embeds = (try? c.decodeIfPresent([DiscordEmbed].self, forKey: .embeds)) ?? []
+        if let lossy = try? c.decodeIfPresent(LossyArray<DiscordComponent>.self, forKey: .components) {
+            components = lossy.elements
+        } else {
+            components = nil
+        }
+        reactions = try c.decodeIfPresent([DiscordReaction].self, forKey: .reactions)
+        referencedMessage = try c.decodeIfPresent(DiscordReferencedMessage.self, forKey: .referencedMessage)
+        type = try c.decodeIfPresent(Int.self, forKey: .type)
+    }
+
+    var isComponentsV2: Bool { ((flags ?? 0) & 32_768) != 0 }
 
     var parsedTimestamp: Date? {
         DiscordDateParser.parse(timestamp)
@@ -500,8 +890,10 @@ enum BotPresenceStatus: String, CaseIterable, Identifiable, Codable {
 
 enum BotActivityType: Int, CaseIterable, Identifiable, Codable {
     case playing = 0
+    case streaming = 1
     case listening = 2
     case watching = 3
+    case custom = 4
     case competing = 5
 
     var id: Int { rawValue }
@@ -509,9 +901,50 @@ enum BotActivityType: Int, CaseIterable, Identifiable, Codable {
     var title: String {
         switch self {
         case .playing: return "Đang chơi"
+        case .streaming: return "Đang phát trực tiếp"
         case .listening: return "Đang nghe"
         case .watching: return "Đang xem"
+        case .custom: return "Trạng thái tùy chỉnh"
         case .competing: return "Thi đấu"
+        }
+    }
+}
+
+enum BotClientPlatform: String, CaseIterable, Identifiable, Codable {
+    case discordIOS = "ios"
+    case discordAndroid = "android"
+    case desktop = "desktop"
+    case web = "web"
+    case embedded = "embedded"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .discordIOS: return "Điện thoại (iOS)"
+        case .discordAndroid: return "Điện thoại (Android)"
+        case .desktop: return "Máy tính (Windows)"
+        case .web: return "Trình duyệt (Web)"
+        case .embedded: return "Console (PlayStation)"
+        }
+    }
+
+    var sfSymbolName: String {
+        switch self {
+        case .discordIOS, .discordAndroid: return "iphone"
+        case .desktop: return "desktopcomputer"
+        case .web: return "globe"
+        case .embedded: return "gamecontroller.fill"
+        }
+    }
+
+    var identifyProperties: [String: String] {
+        switch self {
+        case .discordIOS: return ["os": "iOS", "browser": "Discord iOS", "device": "iPhone"]
+        case .discordAndroid: return ["os": "Android", "browser": "Discord Android", "device": "Android"]
+        case .desktop: return ["os": "Windows", "browser": "Discord Client", "device": ""]
+        case .web: return ["os": "Linux", "browser": "Chrome", "device": ""]
+        case .embedded: return ["os": "Windows", "browser": "Discord Embedded", "device": "PlayStation"]
         }
     }
 }
@@ -557,7 +990,6 @@ enum DiscordTextFormatter {
         members: [DiscordMember]
     ) -> String {
         var out = raw
-        // <@!id> or <@id>
         if let regex = try? NSRegularExpression(pattern: #"<@!?(\d+)>"#) {
             let matches = regex.matches(in: out, range: NSRange(out.startIndex..., in: out))
             for m in matches.reversed() {
@@ -570,7 +1002,6 @@ enum DiscordTextFormatter {
                 out.replaceSubrange(full, with: "@\(name)")
             }
         }
-        // <@&roleId>
         if let regex = try? NSRegularExpression(pattern: #"<@&(\d+)>"#) {
             let matches = regex.matches(in: out, range: NSRange(out.startIndex..., in: out))
             for m in matches.reversed() {
@@ -581,7 +1012,6 @@ enum DiscordTextFormatter {
                 out.replaceSubrange(full, with: "@\(rname)")
             }
         }
-        // <#channelId>
         if let regex = try? NSRegularExpression(pattern: #"<#(\d+)>"#) {
             let matches = regex.matches(in: out, range: NSRange(out.startIndex..., in: out))
             for m in matches.reversed() {
@@ -590,15 +1020,6 @@ enum DiscordTextFormatter {
                 let cid = String(out[idRange])
                 let cname = guild?.channels.first(where: { $0.id == cid })?.displayName ?? "channel"
                 out.replaceSubrange(full, with: "#\(cname)")
-            }
-        }
-        // <:name:id> or <a:name:id>
-        if let regex = try? NSRegularExpression(pattern: #"<a?:([A-Za-z0-9_]+):(\d+)>"#) {
-            let matches = regex.matches(in: out, range: NSRange(out.startIndex..., in: out))
-            for m in matches.reversed() {
-                guard let full = Range(m.range, in: out),
-                      let nameRange = Range(m.range(at: 1), in: out) else { continue }
-                out.replaceSubrange(full, with: ":\(out[nameRange]):")
             }
         }
         return out

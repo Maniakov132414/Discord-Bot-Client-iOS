@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "2.0.0"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "2.1.0"
+    CURRENT_PROJECT_VERSION: "4"
     GENERATE_INFOPLIST_FILE: "NO"
     APP_BUNDLE_ID: "com.maniakov.discordbotclient"
     DEVELOPMENT_TEAM: ""
@@ -34,8 +34,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(APP_BUNDLE_ID)"
         PRODUCT_NAME: DiscordBotClient
-        MARKETING_VERSION: "2.0.0"
-        CURRENT_PROJECT_VERSION: "3"
+        MARKETING_VERSION: "2.1.0"
+        CURRENT_PROJECT_VERSION: "4"
         GENERATE_INFOPLIST_FILE: "NO"
         INFOPLIST_FILE: DiscordBotClient/Info.plist
         LD_RUNPATH_SEARCH_PATHS:
