@@ -1,0 +1,164 @@
+name: Build DiscordBotClient iOS IPA
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ipa:
+    name: Build DiscordBotClient iOS 15+ NoPlug IPA
+    runs-on: macos-26
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26 & Install Tools
+        run: |
+          XCODE_APP=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -n "$XCODE_APP" ]; then
+            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          fi
+          xcodebuild -version
+          swift --version
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          if ! command -v ldid >/dev/null 2>&1; then
+            brew install ldid
+          fi
+          xcodegen --version
+
+      - name: Normalize AppIcon to 1024x1024 opaque PNG
+        run: |
+          ICON_SRC="DiscordBotClient/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
+          sips -s format bmp "$ICON_SRC" --out /tmp/appicon.bmp
+          sips -s format png -z 1024 1024 /tmp/appicon.bmp --out "$ICON_SRC"
+          sips -g pixelWidth -g pixelHeight -g hasAlpha "$ICON_SRC"
+
+      - name: Generate Xcode Project & Assert Bundle Resources
+        run: |
+          xcodegen generate
+          python3 - <<'PY'
+          import plistlib, os
+          pl = plistlib.loads(open("DiscordBotClient/Info.plist", "rb").read())
+          assert pl.get("CFBundleShortVersionString") == "1.0.0", pl
+          assert pl.get("CFBundleVersion") == "1", pl
+          assert pl.get("LSRequiresIPhoneOS") is True, pl
+          assert pl.get("NSAppTransportSecurity", {}).get("NSAllowsLocalNetworking") is True, pl
+          for req in [
+              "DiscordBotClient/Resources/snapshot/index.html",
+              "DiscordBotClient/Resources/snapshot/guild_experiments.json",
+              "DiscordBotClient/Resources/snapshot/user_experiments.json",
+              "DiscordBotClient/Resources/snapshot/apex_experiments.json",
+              "DiscordBotClient/Resources/dbc-assets/dbc-mobile.css",
+              "DiscordBotClient/Resources/dbc-assets/dbc-web-bridge.js",
+              "DiscordBotClient/Resources/vencord-ext/dist/Vencord.js",
+              "DiscordBotClient/Resources/vencord-ext/dist/Vencord.css",
+              "DiscordBotClient/Resources/dbc-editor/index.html",
+          ]:
+              assert os.path.exists(req), f"Missing resource: {req}"
+          print("Info.plist & Resources verified!")
+          PY
+
+      - name: Archive & Package Unsigned / ldid Ad-Hoc IPA (Zero PlugIns)
+        run: |
+          mkdir -p dist
+          xcodebuild archive \
+            -project DiscordBotClient.xcodeproj \
+            -scheme DiscordBotClient \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath /tmp/dd-dbc \
+            -archivePath /tmp/DiscordBotClient.xcarchive \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            MARKETING_VERSION=1.0.0 \
+            CURRENT_PROJECT_VERSION=1 \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+          cat > /tmp/dbc-entitlements.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>application-identifier</key>
+              <string>com.maniakov.discordbotclient</string>
+              <key>keychain-access-groups</key>
+              <array>
+                  <string>com.maniakov.discordbotclient</string>
+              </array>
+          </dict>
+          </plist>
+          EOF
+
+          rm -rf /tmp/pkg-dbc && mkdir -p /tmp/pkg-dbc/Payload
+          cp -R /tmp/DiscordBotClient.xcarchive/Products/Applications/DiscordBotClient.app /tmp/pkg-dbc/Payload/DiscordBotClient.app
+          rm -rf /tmp/pkg-dbc/Payload/DiscordBotClient.app/PlugIns
+          rm -rf /tmp/pkg-dbc/Payload/DiscordBotClient.app/_CodeSignature
+          chmod +x /tmp/pkg-dbc/Payload/DiscordBotClient.app/DiscordBotClient
+          ldid -S/tmp/dbc-entitlements.plist /tmp/pkg-dbc/Payload/DiscordBotClient.app/DiscordBotClient
+
+          (cd /tmp/pkg-dbc && zip -qry "$GITHUB_WORKSPACE/dist/DiscordBotClient.ipa" Payload)
+          cp "$GITHUB_WORKSPACE/dist/DiscordBotClient.ipa" "$GITHUB_WORKSPACE/dist/DiscordBotClient-iOS15-NoPlug.ipa"
+
+      - name: Strict Python Validation of IPA Archives
+        run: |
+          python3 - <<'PY'
+          import zipfile, plistlib, glob, os
+          files = sorted(glob.glob("dist/*.ipa"))
+          assert len(files) == 2, f"Expected 2 IPAs, found {files}"
+          for path in files:
+              name = os.path.basename(path)
+              with zipfile.ZipFile(path) as zf:
+                  names = zf.namelist()
+                  assert not any("_CodeSignature" in n for n in names), f"{name}: unexpected _CodeSignature"
+                  assert not any("/PlugIns/" in n for n in names), f"{name}: unexpected PlugIns"
+                  pl = plistlib.loads(zf.read("Payload/DiscordBotClient.app/Info.plist"))
+                  assert pl.get("CFBundleIdentifier") == "com.maniakov.discordbotclient", pl
+                  assert pl.get("CFBundleShortVersionString") == "1.0.0", pl
+                  assert pl.get("CFBundleVersion") == "1", pl
+                  assert pl.get("MinimumOSVersion") == "15.0", pl
+                  assert pl.get("LSRequiresIPhoneOS") is True, pl
+                  assert "UILaunchScreen" in pl, pl
+                  exe_info = zf.getinfo("Payload/DiscordBotClient.app/DiscordBotClient")
+                  assert ((exe_info.external_attr >> 16) & 0o111) != 0, f"{name}: binary not executable"
+                  for required_res in [
+                      "Payload/DiscordBotClient.app/Resources/snapshot/index.html",
+                      "Payload/DiscordBotClient.app/Resources/dbc-assets/dbc-mobile.css",
+                      "Payload/DiscordBotClient.app/Resources/dbc-assets/dbc-web-bridge.js",
+                      "Payload/DiscordBotClient.app/Resources/vencord-ext/dist/Vencord.js",
+                      "Payload/DiscordBotClient.app/Resources/vencord-ext/dist/Vencord.css",
+                      "Payload/DiscordBotClient.app/Resources/dbc-editor/index.html",
+                  ]:
+                      assert required_res in names, f"{name}: missing {required_res}"
+                  print(f"OK {name}: bid={pl.get('CFBundleIdentifier')} ver={pl.get('CFBundleShortVersionString')} ({pl.get('CFBundleVersion')}) minOS={pl.get('MinimumOSVersion')} size={os.path.getsize(path)}")
+          PY
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiscordBotClient-iOS-IPAs
+          path: dist/*.ipa
+          retention-days: 30
+
+      - name: Publish GitHub Release v1.0.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: DiscordBotClient iOS v1.0.0
+          body: |
+            ## DiscordBotClient iOS v1.0.0 (Standalone Native IPA)
+            - Tích hợp máy chủ loopback `NWListener` (`127.0.0.1`) ngay trong app: chạy **độc lập hoàn toàn trên iPhone/iPad**, giữ Bot Token 100% trên thiết bị (lưu trong iOS Keychain Vault).
+            - Hỗ trợ đổi nhiều Bot Token trong 1 chạm, chuyển sang Server Web tùy chỉnh (URL), xóa cache, mở file/ảnh đính kèm gốc iOS.
+            - Đóng gói iOS 15.0+ NoPlug (0 App Extensions) tương thích ESign, Feather, SideStore, AltStore và TrollStore (`ldid` entitlements).
+          files: dist/*.ipa
+          overwrite_files: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

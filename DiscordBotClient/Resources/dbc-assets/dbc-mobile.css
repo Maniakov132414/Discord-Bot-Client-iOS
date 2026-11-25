@@ -1,0 +1,645 @@
+/**
+ * DiscordBotClient — Discord Native Mobile App UI Stylesheet
+ *
+ * ALL mobile overrides are strictly scoped under `body.dbc-mobile-active`
+ * so PC / Desktop browsers keep 100% original Discord desktop layout!
+ */
+
+.dbc-hidden {
+  display: none !important;
+}
+
+/* Discohook Embed Editor Modal (Desktop + Mobile) */
+#dbc-discohook-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100200;
+  background: #111214;
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
+}
+
+#dbc-discohook-header {
+  height: 48px;
+  min-height: 48px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1e1f22;
+  color: #f2f3f5;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#dbc-discohook-close {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#dbc-discohook-iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #111214;
+}
+
+#dbc-settings-back-btn {
+  display: none;
+}
+
+body.dbc-mobile-active {
+  --dbc-safe-top: env(safe-area-inset-top, 0px);
+  --dbc-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --dbc-rail-width: 72px;
+  --dbc-profile-bar-h: 56px;
+  --custom-app-top-bar-height: 0px !important;
+}
+
+/* ============================================================================
+ * 0. GLOBAL MOBILE RESET & VISUAL VIEWPORT LOCK (Mobile only)
+ * ============================================================================ */
+html:has(body.dbc-mobile-active),
+body.dbc-mobile-active,
+body.dbc-mobile-active #app-mount {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  min-width: 0 !important;
+  height: var(--dbc-vvh, 100dvh) !important;
+  max-height: var(--dbc-vvh, 100dvh) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: #111214 !important;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+body.dbc-mobile-active input,
+body.dbc-mobile-active textarea,
+body.dbc-mobile-active [contenteditable="true"],
+body.dbc-mobile-active [role="textbox"] {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+/* Ensure top-level app wrapper hierarchy fits viewport cleanly (excluded during login) */
+body.dbc-mobile-active:not(.dbc-page-login) #app-mount > div,
+body.dbc-mobile-active:not(.dbc-page-login) #app-mount > [class*="appAsidePanelWrapper_"],
+body.dbc-mobile-active:not(.dbc-page-login) #app-mount [class*="notAppAsidePanel_"],
+body.dbc-mobile-active:not(.dbc-page-login) #app-mount [class*="notAppAsidePanel_"] > [class*="app_"],
+body.dbc-mobile-active:not(.dbc-page-login) #app-mount [class*="app_"] > [class*="layers_"],
+body.dbc-mobile-active:not(.dbc-page-login) #app-mount [class*="layers_"] > [class*="layer_"],
+body.dbc-mobile-active:not(.dbc-page-login) #app-mount [class*="layer_"] > [class*="container_"] {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+}
+
+/* The outer Discord layout container: flex row (NEVER apply when on login screen!) */
+body.dbc-mobile-active:not(.dbc-page-login) #app-mount [class*="base_"] {
+  display: flex !important;
+  flex-direction: row !important;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  position: relative !important;
+}
+
+body.dbc-mobile-active:not(.dbc-page-login) #app-mount [class*="base_"] > [class*="content_"] {
+  display: flex !important;
+  flex-direction: row !important;
+  flex: 1 1 auto !important;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  position: relative !important;
+}
+
+/* HIDE DESKTOP TITLEBAR / WINDOW CHROME COMPLETELY ON MOBILE */
+body.dbc-mobile-active [data-window-chrome="true"],
+body.dbc-mobile-active [data-window-chrome],
+body.dbc-mobile-active [class*="winTitleBar_"],
+body.dbc-mobile-active [class*="typeWindows_"],
+body.dbc-mobile-active [class*="withFrame_"],
+body.dbc-mobile-active [class*="titleBar_"]:not([data-dbc-header-bar="1"]),
+body.dbc-mobile-active [data-dbc-desktop-titlebar="1"] {
+  display: none !important;
+  height: 0 !important;
+  width: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  top: -9999px !important;
+}
+
+/* Hide desktop QR code scanner / login side art on mobile */
+body.dbc-mobile-active [class*="qrCodeContainer_"],
+body.dbc-mobile-active [class*="verticalSeparator_"] {
+  display: none !important;
+}
+
+/* ============================================================================
+ * 1. CLEAN MOBILE LOGIN SCREEN (Blocks app skeleton overlap!)
+ * ============================================================================ */
+body.dbc-mobile-active.dbc-page-login #app-mount [class*="base_"],
+body.dbc-mobile-active.dbc-page-login [data-dbc-guilds-rail],
+body.dbc-mobile-active.dbc-page-login [data-dbc-chan-pane],
+body.dbc-mobile-active.dbc-page-login #dbc-profile-strip,
+body.dbc-mobile-active.dbc-page-login #dbc-mobile-back-btn,
+body.dbc-mobile-active.dbc-page-login #dbc-settings-back-btn,
+body.dbc-mobile-active.dbc-page-login [class*="characterBackground_"] > svg,
+body.dbc-mobile-active.dbc-page-login [class*="artwork_"] {
+  display: none !important;
+}
+
+body.dbc-mobile-active.dbc-page-login [class*="characterBackground_"],
+body.dbc-mobile-active.dbc-page-login [class*="splashBackground_"] {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 100000 !important;
+  background: #111214 !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: max(16px, var(--dbc-safe-top)) 16px max(24px, var(--dbc-safe-bottom)) !important;
+  box-sizing: border-box !important;
+}
+
+body.dbc-mobile-active.dbc-page-login [class*="wrapper_"],
+body.dbc-mobile-active.dbc-page-login [class*="mainLoginContainer_"] {
+  width: 100% !important;
+  max-width: 400px !important;
+  margin: auto !important;
+  position: relative !important;
+  z-index: 100001 !important;
+}
+
+body.dbc-mobile-active.dbc-page-login form,
+body.dbc-mobile-active.dbc-page-login [class*="authBox_"],
+body.dbc-mobile-active .dbc-fallback-token-box {
+  width: 100% !important;
+  max-width: 390px !important;
+  box-sizing: border-box !important;
+  background: #2b2d31 !important;
+  border-radius: 16px !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55) !important;
+  padding: 24px 20px !important;
+  margin: auto !important;
+  position: relative !important;
+  z-index: 100002 !important;
+}
+
+body.dbc-mobile-active.dbc-page-login input[type="password"],
+body.dbc-mobile-active.dbc-page-login input[type="text"],
+body.dbc-mobile-active #dbc-fallback-token-input {
+  width: 100% !important;
+  min-height: 44px !important;
+  height: 44px !important;
+  padding: 10px 14px !important;
+  border-radius: 8px !important;
+  font-size: 16px !important;
+  box-sizing: border-box !important;
+  background: #1e1f22 !important;
+  color: #f2f3f5 !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+}
+
+body.dbc-mobile-active.dbc-page-login button[type="button"],
+body.dbc-mobile-active.dbc-page-login button[type="submit"],
+body.dbc-mobile-active #dbc-fallback-token-btn {
+  width: 100% !important;
+  min-height: 46px !important;
+  height: 46px !important;
+  border-radius: 8px !important;
+  background: #5865f2 !important;
+  color: #ffffff !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  margin-top: 14px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: none !important;
+}
+
+/* ============================================================================
+ * 2. MOBILE NAVIGATION MODE (Browsing Servers + Channels List)
+ * ============================================================================ */
+body.dbc-mobile-active.dbc-mode-nav [data-dbc-drawer="unified"] {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  justify-content: flex-start !important;
+  gap: 0 !important;
+  width: 100vw !important;
+  min-width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: 0 !important;
+  transform: none !important;
+  overflow: hidden !important;
+  position: relative !important;
+  z-index: 90 !important;
+}
+
+body.dbc-mobile-active.dbc-mode-nav [data-dbc-guilds-rail="1"],
+body.dbc-mobile-active.dbc-mode-nav nav[class*="guilds_"] {
+  display: flex !important;
+  position: relative !important;
+  left: 0 !important;
+  top: 0 !important;
+  margin: 0 !important;
+  width: var(--dbc-rail-width) !important;
+  min-width: var(--dbc-rail-width) !important;
+  max-width: var(--dbc-rail-width) !important;
+  height: 100% !important;
+  flex: 0 0 var(--dbc-rail-width) !important;
+  background: #111214 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--dbc-safe-top) 0 calc(var(--dbc-profile-bar-h) + var(--dbc-safe-bottom) + 8px) 0 !important;
+  box-sizing: border-box !important;
+  transform: none !important;
+  z-index: 100 !important;
+}
+
+body.dbc-mobile-active.dbc-mode-nav [data-dbc-chan-pane="1"],
+body.dbc-mobile-active.dbc-mode-nav [class*="sidebarList_"] {
+  display: flex !important;
+  flex-direction: column !important;
+  position: relative !important;
+  left: 0 !important;
+  top: 0 !important;
+  margin: 0 !important;
+  flex: 1 1 auto !important;
+  width: calc(100vw - var(--dbc-rail-width)) !important;
+  min-width: calc(100vw - var(--dbc-rail-width)) !important;
+  max-width: calc(100vw - var(--dbc-rail-width)) !important;
+  height: 100% !important;
+  background: #1e1f22 !important;
+  border-top-left-radius: 16px !important;
+  border: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--dbc-safe-top) 0 calc(var(--dbc-profile-bar-h) + var(--dbc-safe-bottom) + 8px) 0 !important;
+  box-sizing: border-box !important;
+  transform: none !important;
+  z-index: 90 !important;
+}
+
+body.dbc-mobile-active.dbc-mode-nav [data-dbc-chan-pane="1"] > div,
+body.dbc-mobile-active.dbc-mode-nav [data-dbc-chan-pane="1"] > nav,
+body.dbc-mobile-active.dbc-mode-nav [class*="sidebarList_"] > div,
+body.dbc-mobile-active.dbc-mode-nav [class*="sidebarList_"] > nav {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+body.dbc-mobile-active.dbc-mode-nav [data-dbc-content="1"],
+body.dbc-mobile-active.dbc-mode-nav [class*="chat_"],
+body.dbc-mobile-active.dbc-mode-nav main {
+  display: none !important;
+}
+
+body.dbc-mobile-active.dbc-mode-nav [class*="sidebar_"] section[class*="panels_"],
+body.dbc-mobile-active.dbc-mode-nav section[class*="panels_"] {
+  display: none !important;
+}
+
+/* ============================================================================
+ * 3. MOBILE CHAT MODE (Fullscreen Active Channel Messages)
+ * ============================================================================ */
+body.dbc-mobile-active.dbc-mode-chat [data-dbc-guilds-rail="1"],
+body.dbc-mobile-active.dbc-mode-chat [data-dbc-chan-pane="1"],
+body.dbc-mobile-active.dbc-mode-chat [data-dbc-drawer="unified"],
+body.dbc-mobile-active.dbc-mode-chat nav[class*="guilds_"],
+body.dbc-mobile-active.dbc-mode-chat [class*="sidebar_"] {
+  display: none !important;
+}
+
+body.dbc-mobile-active.dbc-mode-chat [data-dbc-content="1"],
+body.dbc-mobile-active.dbc-mode-chat [class*="chat_"],
+body.dbc-mobile-active.dbc-mode-chat main {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100vw !important;
+  min-width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100% !important;
+  flex: 1 1 100vw !important;
+  background: #1e1f22 !important;
+  position: relative !important;
+  padding-top: var(--dbc-safe-top) !important;
+  padding-bottom: var(--dbc-safe-bottom) !important;
+  box-sizing: border-box !important;
+}
+
+body.dbc-mobile-active.dbc-keyboard-open.dbc-mode-chat [data-dbc-content="1"],
+body.dbc-mobile-active.dbc-keyboard-open.dbc-mode-chat [class*="chat_"],
+body.dbc-mobile-active.dbc-keyboard-open.dbc-mode-chat main {
+  padding-bottom: 0px !important;
+}
+
+body.dbc-mobile-active.dbc-mode-chat [data-dbc-header-bar="1"],
+body.dbc-mobile-active.dbc-mode-chat section[class*="title_"],
+body.dbc-mobile-active.dbc-mode-chat [class*="chat_"] > section[class*="container_"] {
+  padding-left: 52px !important;
+  min-height: 48px !important;
+  height: 48px !important;
+}
+
+#dbc-mobile-back-btn {
+  display: none;
+}
+
+body.dbc-mobile-active.dbc-mode-chat:not(.dbc-page-login) #dbc-mobile-back-btn {
+  display: flex !important;
+  position: fixed !important;
+  top: calc(6px + var(--dbc-safe-top)) !important;
+  left: 8px !important;
+  z-index: 99999 !important;
+  pointer-events: auto !important;
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 50% !important;
+  background: rgba(30, 31, 34, 0.95) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  color: #f2f3f5 !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5) !important;
+  touch-action: manipulation;
+}
+
+body.dbc-mobile-active.dbc-mode-chat #dbc-mobile-back-btn:active {
+  background: #5865f2 !important;
+  transform: scale(0.92);
+}
+
+/* ============================================================================
+ * 4. NATIVE MOBILE BOTTOM USER PROFILE BAR
+ * ============================================================================ */
+#dbc-profile-strip {
+  display: none;
+}
+
+body.dbc-mobile-active.dbc-mode-nav:not(.dbc-keyboard-open):not(.dbc-page-login) #dbc-profile-strip {
+  display: flex !important;
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: calc(var(--dbc-profile-bar-h) + var(--dbc-safe-bottom)) !important;
+  padding: 0 12px var(--dbc-safe-bottom) 12px !important;
+  background: #111214 !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+  z-index: 99999 !important;
+  pointer-events: auto !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  box-sizing: border-box !important;
+}
+
+.dbc-profile-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.dbc-profile-avatar {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.dbc-profile-avatar img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #2b2d31;
+}
+
+.dbc-profile-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.dbc-profile-name {
+  color: #f2f3f5;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dbc-profile-tag {
+  color: #949ba4;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dbc-profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.dbc-profile-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 18px;
+  color: #dbdee1;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.dbc-profile-btn:active {
+  background: #5865f2;
+  color: #ffffff;
+}
+
+/* ============================================================================
+ * 5. RIGHT-HAND MEMBERS SLIDE-OVER DRAWER (Mobile only)
+ * ============================================================================ */
+#dbc-members-backdrop {
+  display: none;
+}
+
+body.dbc-mobile-active.dbc-members-open #dbc-members-backdrop {
+  display: block !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  background: rgba(0, 0, 0, 0.6) !important;
+  backdrop-filter: blur(2px) !important;
+  -webkit-backdrop-filter: blur(2px) !important;
+  z-index: 10008 !important;
+}
+
+body.dbc-mobile-active [data-dbc-members-pane="1"],
+body.dbc-mobile-active [class*="membersWrap_"] {
+  display: none !important;
+}
+
+body.dbc-mobile-active.dbc-members-open [data-dbc-members-pane="1"],
+body.dbc-mobile-active.dbc-members-open [class*="membersWrap_"] {
+  display: flex !important;
+  position: fixed !important;
+  top: var(--dbc-safe-top) !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 78vw !important;
+  max-width: 320px !important;
+  height: calc(var(--dbc-vvh, 100dvh) - var(--dbc-safe-top)) !important;
+  background: #2b2d31 !important;
+  z-index: 10010 !important;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.65) !important;
+  border-top-left-radius: 16px !important;
+  overflow-y: auto !important;
+}
+
+/* ============================================================================
+ * 6. @MENTION, #CHANNEL, /COMMAND AUTOCOMPLETE POPUP (Mobile)
+ * ============================================================================ */
+body.dbc-mobile-active [class*="autocomplete_"] {
+  position: fixed !important;
+  left: 8px !important;
+  right: 8px !important;
+  bottom: calc(64px + var(--dbc-safe-bottom)) !important;
+  width: auto !important;
+  max-width: calc(100vw - 16px) !important;
+  max-height: 40dvh !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  z-index: 10050 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6) !important;
+}
+
+body.dbc-mobile-active.dbc-keyboard-open [class*="autocomplete_"] {
+  bottom: 60px !important;
+}
+
+/* ============================================================================
+ * 7. MOBILE MODALS, EMBED BUILDER, POPOUTS, MENUS & SETTINGS DRILL-DOWN
+ * ============================================================================ */
+body.dbc-mobile-active [class*="modal_"],
+body.dbc-mobile-active [class*="root_"][role="dialog"] {
+  max-width: calc(100vw - 16px) !important;
+  max-height: calc(var(--dbc-vvh, 100dvh) - var(--dbc-safe-top) - var(--dbc-safe-bottom) - 24px) !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  margin: auto !important;
+  box-sizing: border-box !important;
+}
+
+body.dbc-mobile-active [class*="menu_"],
+body.dbc-mobile-active [class*="popout_"],
+body.dbc-mobile-active [class*="userPopoutOuter_"] {
+  max-width: calc(100vw - 16px) !important;
+  max-height: 75dvh !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Settings Drill-Down on Mobile */
+body.dbc-mobile-active [class*="standardSidebarView_"] {
+  padding-top: var(--dbc-safe-top) !important;
+}
+
+body.dbc-mobile-active:not(.dbc-settings-content-focused) [class*="standardSidebarView_"] [class*="sidebarRegion_"] {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  flex: 1 1 100vw !important;
+}
+
+body.dbc-mobile-active:not(.dbc-settings-content-focused) [class*="standardSidebarView_"] [class*="contentRegion_"] {
+  display: none !important;
+}
+
+body.dbc-mobile-active.dbc-settings-content-focused [class*="standardSidebarView_"] [class*="sidebarRegion_"] {
+  display: none !important;
+}
+
+body.dbc-mobile-active.dbc-settings-content-focused [class*="standardSidebarView_"] [class*="contentRegion_"] {
+  display: flex !important;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  padding-top: 48px !important;
+}
+
+body.dbc-mobile-active.dbc-settings-content-focused #dbc-settings-back-btn {
+  display: inline-flex !important;
+  align-items: center;
+  position: fixed !important;
+  top: calc(8px + var(--dbc-safe-top)) !important;
+  left: 12px !important;
+  z-index: 100050 !important;
+  background: #2b2d31 !important;
+  color: #f2f3f5 !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 18px !important;
+  padding: 6px 14px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+}
