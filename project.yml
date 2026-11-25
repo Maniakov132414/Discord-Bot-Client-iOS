@@ -1,6 +1,5 @@
 name: DiscordBotClient
 options:
-  bundleIdPrefix: com.maniakov
   deploymentTarget:
     iOS: "15.0"
   xcodeVersion: "26.0"
@@ -11,7 +10,8 @@ settings:
     MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
     GENERATE_INFOPLIST_FILE: "NO"
-    PRODUCT_BUNDLE_IDENTIFIER: "com.maniakov.discordbotclient"
+    APP_BUNDLE_ID: "com.maniakov.discordbotclient"
+    PRODUCT_BUNDLE_IDENTIFIER: "$(APP_BUNDLE_ID)"
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_IDENTITY: ""
     CODE_SIGNING_REQUIRED: "NO"
@@ -35,7 +35,7 @@ targets:
         type: folder
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: "com.maniakov.discordbotclient"
+        PRODUCT_BUNDLE_IDENTIFIER: "$(APP_BUNDLE_ID)"
         PRODUCT_NAME: DiscordBotClient
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
