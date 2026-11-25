@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-ipa:
-    name: Build DiscordBotClient v1.0.1 IPAs
+    name: Build DiscordBotClient v2.0.0 Native IPAs
     runs-on: macos-26
     steps:
       - name: Checkout repository
@@ -36,36 +36,21 @@ jobs:
           sips -s format png -z 1024 1024 /tmp/appicon.bmp --out "$ICON_SRC"
           sips -g pixelWidth -g pixelHeight -g hasAlpha "$ICON_SRC"
 
-      - name: Generate Xcode Project & Assert Flat WebBundle
+      - name: Generate Xcode Project & Assert Pure Native Sources
         run: |
           xcodegen generate
           python3 - <<'PY'
-          import json, os, plistlib, re
+          import os, plistlib
 
-          assert not os.path.exists("DiscordBotClient/Resources"), "Legacy DiscordBotClient/Resources directory must not exist!"
+          assert not os.path.exists("DiscordBotClient/Resources"), "Legacy Resources directory must not exist!"
+          assert not os.path.exists("DiscordBotClient/WebBundle.json"), "Legacy WebBundle.json must not exist!"
           pl = plistlib.loads(open("DiscordBotClient/Info.plist", "rb").read())
-          assert pl.get("CFBundleShortVersionString") == "1.0.1", pl
-          assert pl.get("CFBundleVersion") == "2", pl
+          assert pl.get("CFBundleShortVersionString") == "2.0.0", pl
+          assert pl.get("CFBundleVersion") == "3", pl
           assert pl.get("CFBundleDisplayName") == "DiscordBot", pl
           assert pl.get("LSRequiresIPhoneOS") is True, pl
           assert pl.get("UILaunchScreen") == {}, pl
-          assert pl.get("NSAppTransportSecurity", {}).get("NSAllowsLocalNetworking") is True, pl
-
-          wb = json.load(open("DiscordBotClient/WebBundle.json", "r", encoding="utf-8"))
-          files = wb.get("files", {})
-          for req in [
-              "snapshot/index.html",
-              "snapshot/guild_experiments.json",
-              "snapshot/user_experiments.json",
-              "snapshot/apex_experiments.json",
-              "dbc-assets/dbc-mobile.css",
-              "dbc-assets/dbc-web-bridge.js",
-              "vencord-ext/dist/Vencord.js",
-              "vencord-ext/dist/Vencord.css",
-              "dbc-editor/index.html",
-          ]:
-              assert req in files, f"Missing WebBundle entry: {req}"
-          print(f"Info.plist & WebBundle.json verified ({len(files)} entries)!")
+          print("Info.plist & pure native Swift layout verified!")
           PY
 
       - name: Archive & Package Flat Unsigned IPAs (iOS 15+ & iOS 17+, No ldid)
@@ -77,10 +62,9 @@ jobs:
             local OUT_IPA="$2"
             local DD_PATH="/tmp/dd-dbc-${DEPLOY_TARGET}"
             local ARCHIVE_PATH="/tmp/DiscordBotClient-${DEPLOY_TARGET}.xcarchive"
-            local APP_SRC=""
 
             rm -rf "$DD_PATH" "$ARCHIVE_PATH"
-            if xcodebuild archive \
+            xcodebuild archive \
               -project DiscordBotClient.xcodeproj \
               -scheme DiscordBotClient \
               -configuration Release \
@@ -89,36 +73,14 @@ jobs:
               -archivePath "$ARCHIVE_PATH" \
               IPHONEOS_DEPLOYMENT_TARGET="$DEPLOY_TARGET" \
               APP_BUNDLE_ID=com.maniakov.discordbotclient \
-              MARKETING_VERSION=1.0.1 \
-              CURRENT_PROJECT_VERSION=2 \
+              MARKETING_VERSION=2.0.0 \
+              CURRENT_PROJECT_VERSION=3 \
               CODE_SIGN_IDENTITY="" \
               CODE_SIGNING_REQUIRED=NO \
               CODE_SIGNING_ALLOWED=NO \
-              AD_HOC_CODE_SIGNING_ALLOWED=YES; then
-              APP_SRC="$ARCHIVE_PATH/Products/Applications/DiscordBotClient.app"
-              echo "USING_XCARCHIVE=1 target=$DEPLOY_TARGET"
-            else
-              echo "xcodebuild archive exited non-zero for iOS $DEPLOY_TARGET; falling back to xcodebuild build"
-              xcodebuild build \
-                -project DiscordBotClient.xcodeproj \
-                -scheme DiscordBotClient \
-                -configuration Release \
-                -destination 'generic/platform=iOS' \
-                -derivedDataPath "$DD_PATH" \
-                IPHONEOS_DEPLOYMENT_TARGET="$DEPLOY_TARGET" \
-                DEPLOYMENT_POSTPROCESSING=YES \
-                STRIP_INSTALLED_PRODUCT=YES \
-                APP_BUNDLE_ID=com.maniakov.discordbotclient \
-                MARKETING_VERSION=1.0.1 \
-                CURRENT_PROJECT_VERSION=2 \
-                CODE_SIGN_IDENTITY="" \
-                CODE_SIGNING_REQUIRED=NO \
-                CODE_SIGNING_ALLOWED=NO \
-                AD_HOC_CODE_SIGNING_ALLOWED=YES
-              APP_SRC="$DD_PATH/Build/Products/Release-iphoneos/DiscordBotClient.app"
-              echo "FALLBACK_XCODEBUILD_BUILD=1 target=$DEPLOY_TARGET"
-            fi
+              AD_HOC_CODE_SIGNING_ALLOWED=YES
 
+            local APP_SRC="$ARCHIVE_PATH/Products/Applications/DiscordBotClient.app"
             test -d "$APP_SRC"
             rm -rf /tmp/stage-dbc && mkdir -p /tmp/stage-dbc
             cp -R "$APP_SRC" /tmp/stage-dbc/DiscordBotClient.app
@@ -127,7 +89,7 @@ jobs:
             chmod +x /tmp/stage-dbc/DiscordBotClient.app/DiscordBotClient
 
             python3 - "/tmp/stage-dbc/DiscordBotClient.app" "$GITHUB_WORKSPACE/dist/$OUT_IPA" <<'PY'
-          import os, stat, sys, time, zipfile
+          import os, stat, sys, zipfile
 
           app_dir = sys.argv[1]
           out_ipa = sys.argv[2]
@@ -172,7 +134,7 @@ jobs:
                       f"Payload/DiscordBotClient.app/{name}",
                       executable=(name == "DiscordBotClient"),
                   )
-          print(f"Packaged deterministic flat IPA: {out_ipa} ({os.path.getsize(out_ipa)} bytes)")
+          print(f"Packaged flat native IPA: {out_ipa} ({os.path.getsize(out_ipa)} bytes)")
           PY
           }
 
@@ -197,7 +159,7 @@ jobs:
               off = 32
               for _ in range(ncmds):
                   cmd, cmdsize = struct.unpack("<II", macho[off:off+8])
-                  if cmd == 0x1D:  # LC_CODE_SIGNATURE
+                  if cmd == 0x1D:
                       return True
                   off += cmdsize
               return False
@@ -211,21 +173,23 @@ jobs:
                   assert names[1] == "Payload/DiscordBotClient.app/", names[:5]
                   assert names[2] == "Payload/DiscordBotClient.app/Info.plist", names[:5]
                   assert names[3] == "Payload/DiscordBotClient.app/PkgInfo", names[:5]
+                  assert len(names) == 8, f"{name}: expected 8 flat entries matching ManiFlix.ipa, got {names}"
 
-                  assert not any("_CodeSignature" in n for n in names), f"{name}: unexpected _CodeSignature"
-                  assert not any("/PlugIns/" in n for n in names), f"{name}: unexpected PlugIns"
-                  assert not any("/Resources/" in n for n in names), f"{name}: unexpected Resources/"
+                  assert not any("_CodeSignature" in n for n in names)
+                  assert not any("/PlugIns/" in n for n in names)
+                  assert not any("/Resources/" in n for n in names)
+                  assert not any("WebBundle.json" in n for n in names)
                   for n in names[2:]:
                       rel = n[len("Payload/DiscordBotClient.app/"):]
-                      assert "/" not in rel and rel != "", f"{name}: nested entry not flat: {n}"
+                      assert "/" not in rel and rel != "", f"{name}: nested entry: {n}"
 
                   for i in infos:
-                      assert i.create_system == 3, f"{name}: create_system={i.create_system} for {i.filename}"
+                      assert i.create_system == 3
 
                   pl = plistlib.loads(zf.read("Payload/DiscordBotClient.app/Info.plist"))
                   assert pl.get("CFBundleIdentifier") == "com.maniakov.discordbotclient", pl
-                  assert pl.get("CFBundleShortVersionString") == "1.0.1", pl
-                  assert pl.get("CFBundleVersion") == "2", pl
+                  assert pl.get("CFBundleShortVersionString") == "2.0.0", pl
+                  assert pl.get("CFBundleVersion") == "3", pl
                   assert pl.get("CFBundleDisplayName") == "DiscordBot", pl
                   assert pl.get("MinimumOSVersion") == expected_min_os[name], pl
                   assert pl.get("LSRequiresIPhoneOS") is True, pl
@@ -235,15 +199,15 @@ jobs:
                       "Payload/DiscordBotClient.app/PkgInfo",
                       "Payload/DiscordBotClient.app/Assets.car",
                       "Payload/DiscordBotClient.app/AppIcon60x60@2x.png",
-                      "Payload/DiscordBotClient.app/WebBundle.json",
+                      "Payload/DiscordBotClient.app/AppIcon76x76@2x~ipad.png",
                   ):
                       assert req in names, f"{name}: missing {req}"
 
                   exe_info = zf.getinfo("Payload/DiscordBotClient.app/DiscordBotClient")
-                  assert ((exe_info.external_attr >> 16) & 0o111) == 0o111, f"{name}: binary permissions 0o{exe_info.external_attr>>16:o}"
+                  assert ((exe_info.external_attr >> 16) & 0o111) == 0o111
                   exe = zf.read("Payload/DiscordBotClient.app/DiscordBotClient")
-                  assert not has_lc_code_signature(exe), f"{name}: unexpected LC_CODE_SIGNATURE in binary"
-                  assert b"\xfa\xde\x0c\xc0" not in exe, f"{name}: unexpected ldid/CSMAGIC blob in binary"
+                  assert not has_lc_code_signature(exe)
+                  assert b"\xfa\xde\x0c\xc0" not in exe
 
                   print(f"OK {name}: bid={pl.get('CFBundleIdentifier')} ver={pl.get('CFBundleShortVersionString')} ({pl.get('CFBundleVersion')}) minOS={pl.get('MinimumOSVersion')} entries={len(names)} size={os.path.getsize(path)}")
           PY
@@ -255,15 +219,16 @@ jobs:
           path: dist/*.ipa
           retention-days: 30
 
-      - name: Publish GitHub Release v1.0.1
+      - name: Publish GitHub Release v2.0.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.1
-          name: DiscordBotClient iOS v1.0.1
+          tag_name: v2.0.0
+          name: DiscordBotClient iOS v2.0.0
           body: |
-            ## DiscordBotClient iOS v1.0.1 (Build 2)
-            - Đóng gói toàn bộ web assets vào 1 tệp phẳng `WebBundle.json` trong root `.app` (loại bỏ thư mục `Resources/` và chữ ký `ldid` lỗi) để cài đặt mượt trên ESign, Feather, SideStore, AltStore và TrollStore.
-            - Tích hợp máy chủ loopback `NWListener` (`127.0.0.1`) nội bộ, sửa percent-decoding `@me`, khử trùng lặp header HTTP, `token` `JSON.stringify`, Keychain + Application Support vault fallback (`-34018`), và xóa độ trễ chạm WebView.
+            ## DiscordBotClient iOS v2.0.0 (Build 3) — 100% Native SwiftUI
+            - Viết lại hoàn toàn bằng **SwiftUI + URLSessionWebSocketTask Gateway v10 + REST v10** (loại bỏ hoàn toàn `WKWebView` & `WebBundle.json`), kích thước siêu nhẹ, 100% SF Symbols, 0 emoji trên nút bấm.
+            - Hỗ trợ đa tài khoản Bot lưu 100% trên thiết bị (iOS Keychain + Application Support fallback), tự động chuyển Intents khi gặp lỗi `4014`, đính kèm Ảnh/Video/Tệp, Embed Builder, React, Ghim, Dọn dẹp kênh (Purge), DM theo User ID, Quản lý Shard & Presence.
+            - Đóng gói phẳng 8 tệp chuẩn `ManiFlix.ipa` (`xcodebuild archive`, 0 PlugIns, 0 `ldid`) cài đặt trực tiếp trên ESign, Feather, SideStore, AltStore & TrollStore.
           files: dist/*.ipa
           overwrite_files: true
           make_latest: true

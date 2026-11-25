@@ -3,27 +3,21 @@ import UIKit
 
 @main
 struct DiscordBotClientApp: App {
-    @StateObject private var store = KeychainBotStore.shared
-    @StateObject private var proxy = LocalBotProxyServer.shared
+    @StateObject private var vault = BotVaultStore.shared
+    @StateObject private var gateway = DiscordGatewayService.shared
     @Environment(\.scenePhase) private var scenePhase
-
-    init() {
-        LocalBotProxyServer.shared.start()
-    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .preferredColorScheme(.dark)
-                .environmentObject(store)
-                .environmentObject(proxy)
+                .preferredColorScheme(vault.preferredColorScheme)
+                .tint(vault.accentColor)
+                .environmentObject(vault)
+                .environmentObject(gateway)
                 .onChange(of: scenePhase) { newPhase in
                     if newPhase == .active {
-                        LocalBotProxyServer.shared.ensureRunning()
+                        Task { await gateway.reconnectIfNeeded(vault: vault) }
                     }
-                }
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
-                    LocalBotProxyServer.shared.ensureRunning()
                 }
         }
     }
