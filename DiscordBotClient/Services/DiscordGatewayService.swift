@@ -790,12 +790,16 @@ final class DiscordGatewayService: ObservableObject {
             }
             let memberDict = dict["member"] as? [String: Any]
             let userDict = memberDict?["user"] as? [String: Any]
-            let name = (memberDict?["nick"] as? String)
+            let guildIdForTyping = (dict["guild_id"] as? String) ?? ""
+            let fallbackMemberName = membersByGuild[guildIdForTyping]?.first(where: { $0.user?.id == uid })?.displayName()
+            let fallbackDMName = dmChannels.first(where: { $0.id == cid })?.recipients?.first?.displayName
+            var resolvedName = (memberDict?["nick"] as? String)
                 ?? (userDict?["global_name"] as? String)
                 ?? (userDict?["username"] as? String)
-                ?? membersByGuild[dict["guild_id"] as? String ?? ""]?.first(where: { $0.user?.id == uid })?.displayName()
-                ?? dmChannels.first(where: { $0.id == cid })?.recipients?.first?.displayName
-                ?? "Ai đó"
+            if resolvedName == nil || resolvedName?.isEmpty == true {
+                resolvedName = fallbackMemberName ?? fallbackDMName ?? "Ai đó"
+            }
+            let name = resolvedName ?? "Ai đó"
             var map = typingUsersByChannel[cid] ?? [:]
             map[name] = Date().addingTimeInterval(8)
             typingUsersByChannel[cid] = map
